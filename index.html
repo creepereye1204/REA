@@ -2,7 +2,11 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0f1013">
 <title>Cell Siege</title>
 <meta name="description" content="Top-down grid survival shooter built from a reverse-engineering study of a Flash-era game.">
 <style>
@@ -17,6 +21,11 @@
   .wrap { width: 100%; max-width: 960px; padding: 0 16px; }
   canvas { display: block; width: 100%; aspect-ratio: 3 / 2; background: #16171b; border-radius: 6px; touch-action: none; image-rendering: auto; }
   footer { max-width: 960px; padding: 10px 16px 24px; color: var(--muted); font-size: 13px; line-height: 1.5; }
+  /* mobile: canvas fills the whole screen, page chrome hidden */
+  body.mobile { overflow: hidden; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; overscroll-behavior: none; }
+  body.mobile header, body.mobile footer { display: none; }
+  body.mobile .wrap { position: fixed; inset: 0; max-width: none; padding: 0; }
+  body.mobile canvas { width: 100%; height: 100%; aspect-ratio: auto; border-radius: 0; object-fit: contain; }
   kbd { background: #24262c; border: 1px solid #3a3d45; border-radius: 4px; padding: 0 5px; font-size: 12px; }
 </style>
 </head>

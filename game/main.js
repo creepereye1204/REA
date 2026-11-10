@@ -11,7 +11,7 @@
  */
 
 const CELL = 32, MW = 40, MH = 30;
-const VIEW_W = 960, VIEW_H = 640;
+let VIEW_W = 960, VIEW_H = 640, RS = 1; // logical view size, render scale
 const DT = 1 / 60;
 const INF = 1e9;
 const DIRS = [[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1],[0,-1],[1,-1]]; // 8 directions, 0 = east, clockwise (screen y down)
@@ -405,7 +405,7 @@ function updatePlayer(dt) {
 
   let mx = 0, my = 0;
   if (keys.left) mx -= 1; if (keys.right) mx += 1; if (keys.up) my -= 1; if (keys.down) my += 1;
-  if (touch.active) { mx = touch.mx; my = touch.my; }
+  if (touch.active && (touch.mx || touch.my)) { mx = touch.mx; my = touch.my; }
   const len = Math.hypot(mx, my);
   if (len > 0.2) {
     // facing snaps to 8 directions, like the original's direction-indexed sprites
@@ -631,7 +631,7 @@ const WALL_H = 14;
 
 function draw() {
   const g = ctx;
-  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.setTransform(RS, 0, 0, RS, 0, 0);
   g.fillStyle = '#16171b'; g.fillRect(0, 0, VIEW_W, VIEW_H);
   if (!player) { drawTitle(); return; }
   const sx = Math.round(cam.x + rand(-shake, shake)), sy = Math.round(cam.y + rand(-shake, shake));
@@ -776,18 +776,24 @@ function drawEffect(g, e) {
   }
 }
 
+let uiButtons = []; // hit-test rects for touch, rebuilt every HUD draw
+function btn(id, x, y, w, h) { uiButtons.push({ id, x, y, w, h }); }
+
 function drawHud(g) {
-  const p = player;
+  const p = player, T = touch.enabled;
+  uiButtons = [];
   // HP
   g.fillStyle = 'rgba(0,0,0,.55)'; g.fillRect(12, 12, 224, 22);
-  g.fillStyle = p.hp > 60 ? '#5bd16a' : '#e04a3a'; g.fillRect(14, 14, 220 * p.hp / p.maxHp, 18);
+  g.fillStyle = p.hp > 60 ? '#5bd16a' : '#e04a3a'; g.fillRect(14, 14, 220 * clamp(p.hp / p.maxHp, 0, 1), 18);
   g.fillStyle = '#fff'; g.font = 'bold 12px system-ui, sans-serif'; g.textAlign = 'left';
   g.fillText(`HP ${Math.ceil(p.hp)}`, 20, 28);
   // Score / level
+  const rx = VIEW_W - 16 - (T ? 54 : 0);
   g.textAlign = 'right'; g.font = 'bold 20px system-ui, sans-serif';
-  g.fillText(score.toLocaleString(), VIEW_W - 16, 32);
+  g.fillText(score.toLocaleString(), rx, 32);
   g.font = '12px system-ui, sans-serif'; g.fillStyle = '#bbb';
-  g.fillText(`LEVEL ${level.n}  \u00b7  left ${level.walkersLeft + level.brutesLeft}  \u00b7  kills ${kills}`, VIEW_W - 16, 50);
+  g.fillText(VIEW_W < 700 ? `LV ${level.n} · left ${level.walkersLeft + level.brutesLeft}` :
+    `LEVEL ${level.n}  ·  left ${level.walkersLeft + level.brutesLeft}  ·  kills ${kills}`, rx, 50);
   // Combo meter
   g.textAlign = 'left';
   g.fillStyle = 'rgba(0,0,0,.55)'; g.fillRect(12, 40, 224, 30);
@@ -798,32 +804,48 @@ function drawHud(g) {
   g.fillStyle = '#ffd166'; g.fillRect(80, 52, 148 * clamp(ratio, 0, 1), 8);
   const next = [...combo.rewards.keys()].filter(k => k > combo.m).sort((a, b) => a - b)[0];
   if (next) { g.fillStyle = '#999'; g.font = '10px system-ui, sans-serif'; g.fillText('next reward x' + next, 80, 48); }
-  // Weapons bar
-  let x = 12; const y = VIEW_H - 46;
-  for (const id of WEAPON_ORDER) {
-    if (!ownsWeapon(id)) continue;
-    const w = p.weapons[id], sel = id === p.cur;
-    g.fillStyle = sel ? 'rgba(255,209,102,.9)' : 'rgba(0,0,0,.55)'; g.fillRect(x, y, 92, 34);
+  // Weapons bar (bottom on desktop, top row on touch so thumbs don't cover it; tappable)
+  const owned = WEAPON_ORDER.filter(ownsWeapon);
+  const sw = Math.min(92, Math.floor((VIEW_W - 24) / owned.length) - 4), sh = T ? 38 : 34;
+  let x = 12; const y = T ? 80 : VIEW_H - 46;
+  for (const id of owned) {
+    const w = p.weapons[id], sel = id === p.cur, compact = sw < 70;
+    g.fillStyle = sel ? 'rgba(255,209,102,.9)' : 'rgba(0,0,0,.55)'; g.fillRect(x, y, sw, sh);
     g.fillStyle = sel ? '#111' : '#ddd'; g.font = 'bold 11px system-ui, sans-serif';
-    g.fillText(`${WEAPONS[id].key} ${w.stats.name}`, x + 6, y + 14);
+    g.fillText(compact ? `${WEAPONS[id].key} ${w.stats.name.slice(0, 4)}` : `${WEAPONS[id].key} ${w.stats.name}`, x + 5, y + 15);
     g.font = '11px system-ui, sans-serif';
-    g.fillText(isFinite(w.ammo) ? String(w.ammo) : '\u221e', x + 6, y + 28);
-    x += 96;
+    g.fillText(isFinite(w.ammo) ? String(w.ammo) : '∞', x + 5, y + 30);
+    btn('w:' + id, x, y, sw, sh);
+    x += sw + 4;
   }
   // Messages
   g.textAlign = 'center';
-  let my = 110;
+  let my = T ? 160 : 110;
   for (const m of messages) {
     g.globalAlpha = Math.min(1, m.ttl / 0.5);
-    g.font = m.big ? 'bold 34px system-ui, sans-serif' : 'bold 16px system-ui, sans-serif';
+    g.font = m.big ? `bold ${VIEW_W < 700 ? 28 : 34}px system-ui, sans-serif` : 'bold 16px system-ui, sans-serif';
     g.fillStyle = 'rgba(0,0,0,.6)'; g.fillText(m.text, VIEW_W / 2 + 2, my + 2);
     g.fillStyle = m.color; g.fillText(m.text, VIEW_W / 2, my);
     my += m.big ? 42 : 24;
   }
   g.globalAlpha = 1;
-  if (touch.enabled) drawTouch(g);
-  if (paused) overlay(g, 'PAUSED', 'P to resume');
-  if (mode === 'over') overlay(g, 'YOU DIED', `score ${score.toLocaleString()}   \u00b7   level ${level.n}   \u00b7   best ${best.toLocaleString()}\n\nEnter / tap to retry`);
+  if (T) drawTouch(g);
+  if (paused) overlay(g, 'PAUSED', T ? 'Tap to resume' : 'P to resume');
+  if (mode === 'over') overlay(g, 'YOU DIED', `score ${score.toLocaleString()}  ·  level ${level.n}  ·  best ${best.toLocaleString()}\n\n${T ? 'Tap' : 'Enter / tap'} to retry`);
+}
+
+function wrapLines(g, text, maxW) {
+  const out = [];
+  for (const para of text.split('\n')) {
+    if (!para) { out.push(''); continue; }
+    let line = '';
+    for (const word of para.split(' ')) {
+      const t = line ? line + ' ' + word : word;
+      if (g.measureText(t).width > maxW && line) { out.push(line); line = word; } else line = t;
+    }
+    out.push(line);
+  }
+  return out;
 }
 
 function overlay(g, title, sub) {
@@ -831,30 +853,31 @@ function overlay(g, title, sub) {
   g.textAlign = 'center'; g.fillStyle = '#fff'; g.font = 'bold 48px system-ui, sans-serif';
   g.fillText(title, VIEW_W / 2, VIEW_H / 2 - 20);
   g.font = '16px system-ui, sans-serif'; g.fillStyle = '#ccc';
-  sub.split('\n').forEach((l, i) => g.fillText(l, VIEW_W / 2, VIEW_H / 2 + 20 + i * 22));
+  wrapLines(g, sub, VIEW_W - 48).forEach((l, i) => g.fillText(l, VIEW_W / 2, VIEW_H / 2 + 20 + i * 22));
 }
 
 function drawTitle() {
-  const g = ctx;
-  g.textAlign = 'center'; g.fillStyle = '#fff'; g.font = 'bold 56px system-ui, sans-serif';
-  g.fillText('CELL SIEGE', VIEW_W / 2, 200);
+  const g = ctx, T = touch.enabled;
+  const top = Math.max(120, VIEW_H / 2 - 150);
+  g.textAlign = 'center'; g.fillStyle = '#fff'; g.font = `bold ${VIEW_W < 600 ? 44 : 56}px system-ui, sans-serif`;
+  g.fillText('CELL SIEGE', VIEW_W / 2, top);
   g.font = '16px system-ui, sans-serif'; g.fillStyle = '#bbb';
-  const lines = [
-    'Survive endless waves. Kill fast to build your combo multiplier \u2014',
-    'higher combos unlock new weapons and upgrades.',
-    '',
-    'Move: WASD / Arrows     Fire: Space / J     Weapons: 1-8, Q / E     Pause: P',
-    'Touch: drag left side to move, right button to fire',
-    '',
-    'Press Enter or tap to start',
-  ];
-  lines.forEach((l, i) => g.fillText(l, VIEW_W / 2, 270 + i * 26));
+  const text = 'Survive endless waves. Kill fast to build your combo multiplier — higher combos unlock new weapons and upgrades.\n\n' +
+    (T ? 'Left thumb: drag to move.\nRight thumb: hold to fire.\nTap a weapon at the top to switch.\n\nTap to start'
+       : 'Move: WASD / Arrows   ·   Fire: Space / J\nWeapons: 1-8, Q / E   ·   Pause: P\n\nPress Enter or click to start');
+  wrapLines(g, text, Math.min(VIEW_W - 48, 640)).forEach((l, i) => {
+    if (/start$/.test(l)) { g.fillStyle = '#ffd166'; g.font = 'bold 18px system-ui, sans-serif'; }
+    g.fillText(l, VIEW_W / 2, top + 60 + i * 26);
+  });
 }
 
 // ── Input ─────────────────────────────────────────────────────────────────
 const keys = { up: false, down: false, left: false, right: false, fire: false, firePressed: false, pressed: {} };
 const KEYMAP = { ArrowUp: 'up', KeyW: 'up', ArrowDown: 'down', KeyS: 'down', ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right', Space: 'fire', KeyJ: 'fire', KeyK: 'fire' };
-const touch = { enabled: false, active: false, mx: 0, my: 0, fire: false, firePressed: false, id: null, ox: 0, oy: 0, fireId: null };
+const touch = { enabled: false, active: false, mx: 0, my: 0, fire: false, firePressed: false, id: null, ox: 0, oy: 0, kx: 0, ky: 0, fireId: null };
+const JOY_R = 60;
+const fireBtn = () => ({ x: VIEW_W - 100, y: VIEW_H - 110, r: 62 });
+const swapBtn = () => ({ x: VIEW_W - 196, y: VIEW_H - 60, r: 32 });
 
 function bindInput() {
   addEventListener('keydown', e => {
@@ -865,23 +888,39 @@ function bindInput() {
     audioUnlock();
   });
   addEventListener('keyup', e => { const k = KEYMAP[e.code]; if (k) keys[k] = false; });
-  addEventListener('blur', () => { for (const k of ['up', 'down', 'left', 'right', 'fire']) keys[k] = false; });
+  addEventListener('blur', () => { for (const k of ['up', 'down', 'left', 'right', 'fire']) keys[k] = false; touchReset(); });
+  canvas.addEventListener('mousedown', () => { audioUnlock(); if (mode !== 'play') keys.pressed.Enter = true; });
 
   const pos = t => { const r = canvas.getBoundingClientRect(); return { x: (t.clientX - r.left) * VIEW_W / r.width, y: (t.clientY - r.top) * VIEW_H / r.height }; };
   canvas.addEventListener('touchstart', e => {
-    e.preventDefault(); touch.enabled = true; audioUnlock();
+    e.preventDefault(); audioUnlock(); goFullscreen();
+    if (!touch.enabled) { touch.enabled = true; resize(); }
     for (const t of e.changedTouches) {
       const p = pos(t);
-      if (p.x < VIEW_W * 0.45) { touch.id = t.identifier; touch.ox = p.x; touch.oy = p.y; touch.active = true; touch.mx = touch.my = 0; }
-      else if (p.y < 120 && p.x > VIEW_W - 140) keys.pressed.nextW = true;
-      else { touch.fireId = t.identifier; touch.fire = true; touch.firePressed = true; }
+      if (mode !== 'play') { touch.firePressed = true; continue; }
+      if (paused) { paused = false; continue; }
+      const b = uiButtons.find(b => p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h);
+      if (b) {
+        if (b.id === 'pause') paused = true;
+        else if (b.id.startsWith('w:')) { const id = b.id.slice(2); if (ownsWeapon(id) && player.weapons[id].ammo > 0) selectWeapon(id); }
+        continue;
+      }
+      const sb = swapBtn();
+      if (dist(p.x, p.y, sb.x, sb.y) < sb.r + 8) { keys.pressed.nextW = true; continue; }
+      if (p.x < VIEW_W * 0.5 && touch.id === null) {
+        touch.id = t.identifier; touch.ox = p.x; touch.oy = p.y; touch.kx = p.x; touch.ky = p.y; touch.active = true; touch.mx = touch.my = 0;
+      } else if (touch.fireId === null) { touch.fireId = t.identifier; touch.fire = true; touch.firePressed = true; }
     }
   }, { passive: false });
   canvas.addEventListener('touchmove', e => {
     e.preventDefault();
     for (const t of e.changedTouches) if (t.identifier === touch.id) {
-      const p = pos(t), dx = p.x - touch.ox, dy = p.y - touch.oy, l = Math.hypot(dx, dy);
-      touch.mx = l > 8 ? dx / Math.max(l, 50) : 0; touch.my = l > 8 ? dy / Math.max(l, 50) : 0;
+      const p = pos(t); let dx = p.x - touch.ox, dy = p.y - touch.oy; const l = Math.hypot(dx, dy);
+      // floating stick: drag the base along when the thumb goes past the rim
+      if (l > JOY_R) { touch.ox = p.x - dx / l * JOY_R; touch.oy = p.y - dy / l * JOY_R; dx = dx / l * JOY_R; dy = dy / l * JOY_R; }
+      touch.kx = p.x; touch.ky = p.y;
+      const m = Math.hypot(dx, dy);
+      touch.mx = m > 10 ? dx / JOY_R : 0; touch.my = m > 10 ? dy / JOY_R : 0;
     }
   }, { passive: false });
   const end = e => {
@@ -891,20 +930,45 @@ function bindInput() {
     }
   };
   canvas.addEventListener('touchend', end); canvas.addEventListener('touchcancel', end);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) { touchReset(); if (mode === 'play') paused = true; } });
 }
+function touchReset() { touch.active = false; touch.id = null; touch.mx = touch.my = 0; touch.fire = false; touch.fireId = null; }
+
+function goFullscreen() {
+  const el = document.documentElement;
+  if (document.fullscreenElement || !document.body.classList.contains('mobile')) return;
+  try { const r = (el.requestFullscreen || el.webkitRequestFullscreen).call(el, { navigationUI: 'hide' }); if (r && r.catch) r.catch(() => {}); } catch (e) { /* iOS Safari: not supported */ }
+}
+
 function drawTouch(g) {
-  g.globalAlpha = 0.25; g.fillStyle = '#fff';
-  if (touch.active) { g.beginPath(); g.arc(touch.ox, touch.oy, 50, 0, 7); g.fill(); g.beginPath(); g.arc(touch.ox + touch.mx * 50, touch.oy + touch.my * 50, 22, 0, 7); g.fill(); }
-  g.beginPath(); g.arc(VIEW_W - 90, VIEW_H - 110, 48, 0, 7); g.fill();
-  g.fillRect(VIEW_W - 130, 70, 118, 40);
-  g.globalAlpha = 0.8; g.fillStyle = '#000'; g.textAlign = 'center'; g.font = 'bold 14px system-ui, sans-serif';
-  g.fillText('FIRE', VIEW_W - 90, VIEW_H - 105); g.fillText('NEXT WPN', VIEW_W - 71, 95);
+  // joystick
+  const bx = touch.active ? touch.ox : 110, by = touch.active ? touch.oy : VIEW_H - 120;
+  g.globalAlpha = touch.active ? 0.3 : 0.15; g.fillStyle = '#fff';
+  g.beginPath(); g.arc(bx, by, JOY_R, 0, 7); g.fill();
+  g.globalAlpha = touch.active ? 0.55 : 0.3;
+  g.beginPath(); g.arc(touch.active ? bx + touch.mx * JOY_R : bx, touch.active ? by + touch.my * JOY_R : by, 26, 0, 7); g.fill();
+  // fire
+  const f = fireBtn();
+  g.globalAlpha = touch.fire ? 0.5 : 0.25; g.fillStyle = touch.fire ? '#ffd166' : '#fff';
+  g.beginPath(); g.arc(f.x, f.y, f.r, 0, 7); g.fill();
+  // next weapon
+  const s = swapBtn();
+  g.globalAlpha = 0.22; g.fillStyle = '#fff'; g.beginPath(); g.arc(s.x, s.y, s.r, 0, 7); g.fill();
+  // pause
+  g.fillRect(VIEW_W - 58, 14, 44, 40); btn('pause', VIEW_W - 62, 10, 52, 48);
+  g.globalAlpha = 0.85; g.fillStyle = '#000'; g.textAlign = 'center';
+  g.font = 'bold 16px system-ui, sans-serif'; g.fillText('FIRE', f.x, f.y + 6);
+  g.font = 'bold 12px system-ui, sans-serif'; g.fillText('WPN', s.x, s.y + 4);
+  g.fillStyle = '#fff'; g.fillRect(VIEW_W - 42, 24, 5, 20); g.fillRect(VIEW_W - 33, 24, 5, 20);
   g.globalAlpha = 1;
 }
 
 // ── Tiny synth SFX (WebAudio, no assets) ──────────────────────────────────
 let actx = null;
-function audioUnlock() { if (!actx) { try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { actx = null; } } }
+function audioUnlock() {
+  if (!actx) { try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { actx = null; } }
+  if (actx && actx.state === 'suspended') actx.resume().catch(() => {});
+}
 const SFX = {
   shot: [880, 0.04, 'square', 0.04], shotgun: [160, 0.12, 'sawtooth', 0.09], rail: [1400, 0.18, 'sine', 0.07],
   rocket: [220, 0.2, 'sawtooth', 0.05], throw: [500, 0.06, 'triangle', 0.05], place: [300, 0.06, 'triangle', 0.06],
@@ -941,9 +1005,36 @@ function frame(ts) {
   requestAnimationFrame(frame);
 }
 
+// Fit the logical view to the screen. Mobile: full-screen in any orientation,
+// short side = 560 logical px; desktop: fixed 960x640. Render at device pixel density.
+function isMobile() {
+  return (typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches) || innerWidth < 760;
+}
+function resize() {
+  const mobile = isMobile() || touch.enabled;
+  document.body.classList.toggle('mobile', mobile);
+  let cssW, cssH;
+  if (mobile) {
+    cssW = innerWidth; cssH = innerHeight;
+    // short side ~560 logical px, but never exceed the map so the screen is always filled
+    const k = Math.min(560 / Math.min(cssW, cssH), (MW * CELL) / cssW, (MH * CELL) / cssH);
+    VIEW_W = Math.min(Math.round(cssW * k), MW * CELL); VIEW_H = Math.min(Math.round(cssH * k), MH * CELL);
+  } else {
+    VIEW_W = 960; VIEW_H = 640;
+    cssW = canvas.getBoundingClientRect().width || 960; cssH = cssW * VIEW_H / VIEW_W;
+  }
+  const dpr = window.devicePixelRatio || 1;
+  RS = clamp(Math.min(cssW / VIEW_W, cssH / VIEW_H) * dpr, 1, 3);
+  canvas.width = Math.round(VIEW_W * RS); canvas.height = Math.round(VIEW_H * RS);
+}
+
 function boot() {
   canvas = document.getElementById('game');
   ctx = canvas.getContext('2d');
+  touch.enabled = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+  resize();
+  addEventListener('resize', resize);
+  addEventListener('orientationchange', () => setTimeout(resize, 200));
   try { best = +localStorage.getItem('cellsiege.best') || 0; } catch (e) { best = 0; }
   bindInput();
   requestAnimationFrame(frame);
