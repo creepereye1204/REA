@@ -1,0 +1,1182 @@
+'use strict';
+// Authoritative simulation. In co-op the host runs this; the guest only renders snapshots.
+
+let G = null;
+let SR = rng((Date.now() ^ 0x5bd1e995) >>> 0);
+const flowBase = new Int32Array(MW * MH), flowPl = new Int32Array(MW * MH);
+let flowBaseDirty = true, flowBaseCD = 0, flowPlKey = '', flowPlCD = 0;
+const CORE_DEF = { name: '발전기 코어', hp: 5000, block: true }, BENCH_DEF = { name: '작업대', hp: 1e9, block: true };
+const KIND_LIST = [...Object.keys(MOBS), ...Object.keys(HUMANS)];
+const PCOLORS = ['#3f8fc4', '#e08a2f'];
+
+// ── setup ─────────────────────────────────────────────────────────────────
+function newGame(seed) {
+  genWorld(seed);
+  G = {
+    seed, t: 0, tick: 0, clock: 7 * 60, day: 1, phase: 'day', players: [], ents: [], structs: [], drops: [], shots: [], booms: [],
+    stash: { cash: 80, wood: 40, scrap: 20, food: 6, meds: 2, grenade: 2, mine: 1, mags: { pistol: [12, 12, 12] }, owned: { machete: 1, pistol: 1 }, upg: {} },
+    vh: W.villages.map(() => 0), merchantHostile: false, kills: 0, over: null, nextId: 1, waves: [], spawnQ: [], warn: null,
+    raidAt: -1, fxOut: [], tileDiff: {}, core: null, bench: null, nightN: 0, lootLog: 0,
+  };
+  const b = W.base;
+  // core (2×2) + workbench
+  const coreCells = [idx(b.cx - 1, b.cy - 1), idx(b.cx, b.cy - 1), idx(b.cx - 1, b.cy), idx(b.cx, b.cy)];
+  G.core = addStruct('core', coreCells, CORE_DEF);
+  G.bench = addStruct('bench', [idx(b.cx + 4, b.cy - 3)], BENCH_DEF);
+  // starter wooden perimeter with doors on the roads
+  const x0 = b.cx - 8, x1 = b.cx + 7, y0 = b.cy - 7, y1 = b.cy + 6;
+  for (let x = x0; x <= x1; x++) for (const y of [y0, y1]) starter(x, y);
+  for (let y = y0 + 1; y < y1; y++) for (const x of [x0, x1]) starter(x, y);
+  function starter(x, y) {
+    const onRoadV = Math.abs(x - b.cx) <= 1 && (y === y0 || y === y1), onRoadH = Math.abs(y - b.cy) <= 1 && (x === x0 || x === x1);
+    const gate = (onRoadV && x === b.cx) || (onRoadH && y === b.cy);
+    addStruct(gate ? 'door' : 'wall_wood', [idx(x, y)]);
+  }
+  for (const s of W.npcSpawns) spawnHuman(s.kind, s.x, s.y, s);
+  spawnMerchant();
+  for (let k = 0; k < 6; k++) spawnSurvivor();
+  for (let k = 0; k < 55; k++) spawnDayZombie();
+  return G;
+}
+
+function makePlayer(pid) {
+  const b = W.base;
+  return {
+    id: -1 - pid, pid, cat: 'player', team: 'player', name: 'P' + (pid + 1), color: PCOLORS[pid],
+    x: b.cx + 0.5 + (pid ? 2 : -2), y: b.cy + 3.5, r: 0.3, angle: -Math.PI / 2,
+    hp: 100, maxHp: 100, hunger: 100, stamina: 100, wpn: 'pistol', mag: { pistol: 12, machete: 0 },
+    reloadT: 0, fireT: 0, prevFire: false, down: false, downT: 0, dead: false, healT: 0, flash: 0, walk: 0,
+    in: { fire: false, use: false, sprint: false, crouch: false, ax: 0, ay: 0, moving: false },
+    useT: 0, useKey: null, useP: 0, useLabel: '', noAmmoT: 0, joined: true,
+  };
+}
+function addPlayer(pid) { const p = makePlayer(pid); G.players[pid] = p; return p; }
+
+function newEnt(o) { o.id = G.nextId++; o.flash = 0; o.walk = 0; o.vx = 0; o.vy = 0; o.atkAnim = 0; G.ents.push(o); return o; }
+
+function spawnMob(kind, x, y, wave) {
+  const d = MOBS[kind];
+  const hpMul = 1 + Math.max(0, G.day - 1) * 0.06;
+  return newEnt({ cat: 'mob', kind, def: d, team: 'zombie', x, y, r: d.r, angle: SR.r(0, TAU), hp: d.hp * hpMul, maxHp: d.hp * hpMul,
+                  speed: d.speed * SR.r(0.9, 1.1), state: 'wander', target: null, seenT: -99, atkT: 0, spitT: SR.r(0, 2), wave: !!wave,
+                  wanderT: 0, wx: 0, wy: 0, stuckT: 0, invest: null, screamed: false });
+}
+function spawnHuman(kind, x, y, o = {}) {
+  const d = HUMANS[kind];
+  const h = newEnt({
+    cat: 'human', kind, def: d, team: d.team, x, y, r: 0.32, angle: SR.r(0, TAU), hp: d.hp, maxHp: d.hp, speed: d.speed,
+    wpn: d.wpn, mag: d.wpn && !WEAPONS[d.wpn].melee ? WEAPONS[d.wpn].mag : 0, reloadT: 0, fireT: 0, target: null, seenT: -99,
+    village: o.village !== undefined ? o.village : -1, camp: o.camp !== undefined ? o.camp : -1, home: o.home || { x, y },
+    path: null, pathT: 0, pathGoal: null, wanderT: 0, wx: x, wy: y, strafe: 1, strafeT: 0, alert: 0, sees: false, mode: o.mode || 'idle',
+    inv: { cash: 5 + SR.i(25), food: SR.chance(0.4) ? 1 : 0, meds: SR.chance(0.2) ? 1 : 0 }, atkT: 0,
+  });
+  if (d.team === 'bandit') { h.inv.cash += 15 + SR.i(40); if (d.wpn && !WEAPONS[d.wpn].melee) h.inv['mag:' + d.wpn] = 1 + SR.i(2); if (SR.chance(0.3)) h.inv.grenade = 1; }
+  if (kind === 'bandit_boss') { h.inv.cash += 150; h.inv['wpn:rifle'] = 1; h.inv['mag:rifle'] = 3; }
+  if (kind === 'guard') h.inv['mag:rifle'] = 1 + SR.i(2);
+  if (d.shop) h.stock = makeStock(kind, SR);
+  return h;
+}
+function spawnMerchant() {
+  const b = W.base;
+  const m = spawnHuman('merchant', b.cx - 4.5, b.cy + 3.5, { home: { x: b.cx - 4.5, y: b.cy + 3.5 } });
+  G.merchantHostile = false;
+  return m;
+}
+function spawnSurvivor() {
+  const spots = W.survivorSpots.filter(s => !G.ents.some(e => e.kind === 'survivor' && dist(e.x, e.y, s.x, s.y) < 3));
+  if (!spots.length) return null;
+  const s = SR.pick(spots);
+  if (cellBlocked(idx(Math.floor(s.x), Math.floor(s.y)), 'player')) return null;
+  const h = spawnHuman('survivor', s.x, s.y, { mode: 'wait' });
+  h.name = SR.i(SURVIVOR_NAMES.length); h.perk = SR.pick(Object.keys(PERKS));
+  h.wpn = SR.pick(['pistol', 'pistol', 'smg', 'shotgun']); h.mag = WEAPONS[h.wpn].mag; h.hunger = 0;
+  return h;
+}
+function spawnDayZombie() {
+  const b = W.base;
+  for (let k = 0; k < 30; k++) {
+    const p = randomFreeCell(SR, 2, 2, MW - 2, MH - 2);
+    if (!p || dist(p.x, p.y, b.cx, b.cy) < 26) continue;
+    if (G.players.some(pl => pl && dist(p.x, p.y, pl.x, pl.y) < 18)) continue;
+    if (W.bldAt[idx(Math.floor(p.x), Math.floor(p.y))] >= 0 && W.buildings[W.bldAt[idx(Math.floor(p.x), Math.floor(p.y))]].village >= 0) continue;
+    if (W.villages.some(v => p.x > v.x - 2 && p.x < v.x + v.w + 2 && p.y > v.y - 2 && p.y < v.y + v.h + 2)) continue;
+    const kinds = ['walker', 'walker', 'walker', 'crawler', ...(G.day >= 2 ? ['runner'] : []), ...(G.day >= 3 ? ['spitter'] : [])];
+    return spawnMob(SR.pick(kinds), p.x, p.y, false);
+  }
+  return null;
+}
+
+// ── structures ──────────────────────────────────────────────────────────────
+function addStruct(type, cells, def) {
+  def = def || STRUCTS[type];
+  let sx = 0, sy = 0;
+  for (const c of cells) { sx += cellX(c) + 0.5; sy += cellY(c) + 0.5; }
+  const s = { id: G.nextId++, type, def, cells, x: sx / cells.length, y: sy / cells.length, hp: def.hp, maxHp: def.hp, angle: -Math.PI / 2,
+              ammo: def.ammo || 0, fireT: 0, fuse: -1, flash: 0 };
+  for (const c of cells) { W.structAt[c] = s; updateCellMB(c); }
+  G.structs.push(s);
+  flowBaseDirty = true;
+  return s;
+}
+function removeStruct(s) {
+  for (const c of s.cells) { if (W.structAt[c] === s) W.structAt[c] = null; updateCellMB(c); }
+  const i = G.structs.indexOf(s); if (i >= 0) G.structs.splice(i, 1);
+  flowBaseDirty = true;
+}
+function damageStruct(s, dmg, src) {
+  if (s.dead || s.type === 'bench') return;
+  if (src && src.team === 'player' && s.type !== 'barrel') dmg *= 0.3;
+  s.hp -= dmg; s.flash = 4;
+  if (s.type === 'core') {
+    if (G.tick % 20 === 0) fx({ k: 'msg', text: '⚠ 코어가 공격받고 있습니다!', c: '#ff6b5c', big: 0 });
+    if (s.hp <= 0) { s.hp = 0; gameOver('core'); }
+    return;
+  }
+  if (s.hp <= 0) destroyStruct(s);
+}
+function destroyStruct(s) {
+  if (s.dead) return;
+  s.dead = true; removeStruct(s);
+  fx({ k: 'debris', x: s.x, y: s.y, c: s.type === 'wall_metal' ? '#8a8f9c' : '#8a6a44' });
+  if (s.type === 'barrel') explode(s.x, s.y, 150, 2.8, null);
+  else if (s.type === 'mine') explode(s.x, s.y, 130, 2.6, null);
+}
+function canPlace(type, cell) {
+  if (cell < 0 || cell >= MW * MH) return false;
+  const x = cellX(cell), y = cellY(cell);
+  if (dist(x + 0.5, y + 0.5, G.core.x, G.core.y) > BUILD_RADIUS) return false;
+  if (W.mb[cell] & (MB_TERRAIN | MB_OBJ)) return false;
+  if (W.structAt[cell] || W.tile[cell] === T.WATER) return false;
+  if (STRUCTS[type].block) {
+    for (const p of G.players) if (p && !p.dead && Math.floor(p.x) === x && Math.floor(p.y) === y) return false;
+    for (const e of G.ents) if (Math.floor(e.x) === x && Math.floor(e.y) === y) return false;
+  }
+  return true;
+}
+function canAfford(cost) { for (const k in cost) if ((G.stash[k] || 0) < cost[k]) return false; return true; }
+function pay(cost) { for (const k in cost) G.stash[k] -= cost[k]; }
+
+// ── helpers ──────────────────────────────────────────────────────────────────
+function fx(o) { G.fxOut.push(o); if (typeof applyFx === 'function') applyFx(o); }
+function say(text, c = '#fff', pid = -1, big = 0) { fx({ k: 'msg', text, c, pid, big }); }
+function sfxAt(n, x, y) { fx({ k: 'sfx', n, x, y }); }
+const alivePlayers = () => G.players.filter(p => p && p.joined && !p.dead && !p.down);
+const isNight = () => G.phase === 'night' || G.phase === 'dawn' && false;
+const inBase = (x, y) => { const b = W.base; return x >= b.x && y >= b.y && x < b.x + b.w && y < b.y + b.h; };
+function villageAt(x, y) { for (const v of W.villages) if (x >= v.x && y >= v.y && x < v.x + v.w && y < v.y + v.h) return v; return null; }
+
+function hostile(a, b) {
+  if (a === b || !b || b.dead) return false;
+  if (b.cat === 'player' && (b.down || b.dead)) return false;
+  const ta = a.team, tb = b.team;
+  if (ta === tb) return false;
+  if (ta === 'zombie' || tb === 'zombie') return true;
+  if (ta === 'bandit' || tb === 'bandit') return true;
+  if ((ta === 'village' && tb === 'player') || (ta === 'player' && tb === 'village')) {
+    const v = ta === 'village' ? a.village : b.village;
+    return v >= 0 && G.vh[v] > 0;
+  }
+  if ((ta === 'merchant' && tb === 'player') || (ta === 'player' && tb === 'merchant')) return G.merchantHostile;
+  return false;
+}
+// can a shot fired by `sh` hit `e`? Player-side shots hit anyone not on the player team.
+function canHit(sh, e) {
+  if (e === sh || e.dead || e.hp <= 0) return false;
+  if (e.cat === 'player') return sh.team !== 'player' && !e.down;
+  if (sh.team === 'player') return e.team !== 'player';
+  return hostile(sh, e);
+}
+function allActors() { const a = G.ents.slice(); for (const p of G.players) if (p && p.joined && !p.dead) a.push(p); return a; }
+
+function magCap(wid) { const u = (G.stash.upg[wid] || {}); return Math.round(WEAPONS[wid].mag * (1 + UPG_STATS.mag.per * (u.mag || 0))); }
+function wstat(wid, stat) {
+  const w = WEAPONS[wid], u = G.stash.upg[wid] || {}, l = u[stat] || 0;
+  if (stat === 'dmg') return w.dmg * (1 + UPG_STATS.dmg.per * l);
+  if (stat === 'rate') return w.rate * (1 - UPG_STATS.rate.per * l);
+  if (stat === 'reload') return (w.reload || 0) * (1 - UPG_STATS.reload.per * l);
+  if (stat === 'mag') return magCap(wid);
+  return w[stat];
+}
+
+function giveItem(id, n, pid = -1, x, y) {
+  if (!n) return;
+  const S = G.stash;
+  if (id.startsWith('mag:')) {
+    const w = id.slice(4); S.mags[w] = S.mags[w] || [];
+    for (let k = 0; k < n; k++) S.mags[w].push(magCap(w));
+  } else if (id.startsWith('wpn:')) {
+    const w = id.slice(4);
+    if (!S.owned[w]) { S.owned[w] = 1; say(`새 무기 획득: ${WEAPONS[w].name} (${WEAPONS[w].key})`, '#ffd166', -1, 1); sfxAt('unlock', x, y); }
+    giveItem('mag:' + w, 2, pid);
+  } else S[id] = (S[id] || 0) + n;
+  if (x !== undefined) fx({ k: 'float', x, y, text: `+${n} ${itemName(id)}`, c: id === 'cash' ? '#ffd166' : '#cfe8ff' });
+}
+function rollLoot(kind) {
+  const tbl = CONTAINERS[kind].loot, out = {};
+  const rolls = 1 + SR.i(kind === 'safe' || kind === 'stash' ? 3 : 2) + (kind === 'car' ? 1 : 0);
+  const tot = tbl.reduce((s, e) => s + e[3], 0);
+  for (let r = 0; r < rolls; r++) {
+    let q = SR.f() * tot;
+    for (const [id, a, b, w] of tbl) { if ((q -= w) <= 0) { const n = a + SR.i(b - a + 1); if (n) out[id] = (out[id] || 0) + n; break; } }
+  }
+  return out;
+}
+
+// ── noise ──────────────────────────────────────────────────────────────────
+function makeNoise(x, y, r, src) {
+  if (r < 2) return;
+  for (const e of G.ents) {
+    if (e.cat !== 'mob' || e.target) continue;
+    if (dist(e.x, e.y, x, y) < r) { e.invest = { x, y, t: G.t + 12 }; if (src && src.cat === 'player' && dist(e.x, e.y, x, y) < r * 0.5) { e.target = src; e.seenT = G.t; } }
+  }
+}
+
+// ── combat ─────────────────────────────────────────────────────────────────
+function damage(e, dmg, src, kx = 0, ky = 0) {
+  if (e.dead) return;
+  if (e.cat === 'player') {
+    if (e.down || G.over) return;
+    if (src && src.team === 'player') dmg *= 0.5;
+    e.hp -= dmg; e.flash = 5;
+    fx({ k: 'hurt', pid: e.pid, x: e.x, y: e.y });
+    if (e.hp <= 0) downPlayer(e);
+    return;
+  }
+  e.hp -= dmg; e.flash = 4;
+  const kb = (e.def.heavy ? 0.15 : 1) * Math.min(0.25, dmg / 260);
+  e.vx += kx * kb; e.vy += ky * kb;
+  if (SR.chance(0.5)) fx({ k: 'blood', x: e.x, y: e.y, z: e.cat === 'mob' ? 1 : 0 });
+  if (src && src.team === 'player') {
+    if (e.team === 'village' && e.village >= 0 && G.vh[e.village] <= 0) villageHostile(e.village, '공격');
+    if (e.team === 'merchant' && !G.merchantHostile) { G.merchantHostile = true; say('떠돌이 상인이 총을 꺼냅니다!', '#ff6b5c', -1, 1); }
+  }
+  if (src && (src.cat === 'player' || src.cat === 'mob' || src.cat === 'human') && hostile(e, src)) { e.target = src; e.seenT = G.t; }
+  if (e.hp <= 0) kill(e, src);
+}
+function kill(e, src) {
+  if (e.dead) return;
+  e.dead = true; e.hp = 0;
+  const byPlayer = src && src.team === 'player';
+  if (e.cat === 'mob') {
+    fx({ k: 'gib', x: e.x, y: e.y, c: e.def.body, big: e.def.r > 0.5 ? 1 : 0 });
+    sfxAt('kill', e.x, e.y);
+    if (byPlayer) {
+      G.kills++;
+      const c = e.def.cash[0] + SR.i(e.def.cash[1] - e.def.cash[0] + 1);
+      if (c) { G.stash.cash += c; fx({ k: 'float', x: e.x, y: e.y - 0.4, text: '$' + c, c: '#ffd166' }); }
+      if (SR.chance(e.def.boss ? 1 : 0.04)) dropBag(e.x, e.y, e.def.boss ? { cash: 100, 'mag:launcher': 2, grenade: 3, meds: 2 } : rollLoot(SR.pick(['cabinet', 'crate'])));
+    }
+    if (e.def.explode) explode(e.x, e.y, e.def.explode.dmg, e.def.explode.r, e);
+  } else {
+    fx({ k: 'gib', x: e.x, y: e.y, c: '#7a1414', big: 0 });
+    sfxAt('kill', e.x, e.y);
+    const items = { ...e.inv };
+    if (e.wpn && !WEAPONS[e.wpn].melee) { items['mag:' + e.wpn] = (items['mag:' + e.wpn] || 0) + 1; if (e.kind !== 'survivor') items['wpn:' + e.wpn] = 1; }
+    if (e.stock) for (const k in e.stock) items[k] = (items[k] || 0) + e.stock[k];
+    if (e.kind !== 'survivor') dropBag(e.x, e.y, items, e.def.name);
+    if (byPlayer) G.kills++;
+    if (e.kind === 'survivor' && e.mode !== 'wait') say(`${SURVIVOR_NAMES[e.name]} 사망…`, '#ff8a7a');
+    if (e.team === 'village' && byPlayer && e.village >= 0) { G.vh[e.village] = Math.max(G.vh[e.village], 3); }
+    if (e.kind === 'trader') say(`${W.villages[e.village].name}의 상인이 죽었습니다. 소지품을 챙길 수 있습니다.`, '#ffd166');
+    if (e.kind === 'merchant') say('떠돌이 상인을 처치했습니다. 모든 물건이 떨어졌습니다.', '#ffd166');
+  }
+}
+function dropBag(x, y, items, from) {
+  let any = false; for (const k in items) if (items[k] > 0) any = true;
+  if (!any) return;
+  G.drops.push({ id: G.nextId++, x, y, items, from: from || '', ttl: FPS * 60 * 5 });
+  if (G.drops.length > 80) G.drops.shift();
+}
+
+function downPlayer(p) {
+  p.hp = 0;
+  const others = G.players.filter(q => q && q !== p && q.joined && !q.dead && !q.down);
+  if (!others.length) { gameOver('dead'); return; }
+  p.down = true; p.downT = 45; p.reloadT = 0;
+  say(`${p.name} 쓰러짐! 가까이 가서 [E]를 눌러 살리세요`, '#ff6b5c', -1, 1);
+}
+function gameOver(reason) {
+  if (G.over) return;
+  G.over = { reason, day: G.day, kills: G.kills };
+  fx({ k: 'over', reason });
+}
+
+// hitscan: walls stop it, player-side bullets pass over own structures, others hit them
+function hitscan(sh, x, y, a, range, dmg, pierce = 1, color) {
+  const dx = Math.cos(a), dy = Math.sin(a);
+  let structHit = null;
+  const wallD = rayCells(x, y, dx, dy, range, (i, t) => {
+    if (TILE_OPAQUE[W.tile[i]]) return true;
+    const s = W.structAt[i];
+    if (s && s.def.block && sh.team !== 'player' && t > 0.3) { structHit = s; return true; }
+    if (s && s.type === 'barrel' && sh.team === 'player' && t > 0.3) { structHit = s; return true; }
+    return false;
+  });
+  const hits = [];
+  for (const e of allActors()) {
+    if (!canHit(sh, e)) continue;
+    const ex = e.x - x, ey = e.y - y, pr = ex * dx + ey * dy;
+    if (pr < 0 || pr > wallD) continue;
+    if (Math.abs(ex * dy - ey * dx) < e.r + 0.05) hits.push([pr, e]);
+  }
+  hits.sort((p, q) => p[0] - q[0]);
+  let end = wallD;
+  for (let k = 0; k < hits.length && k < pierce; k++) {
+    const [pr, e] = hits[k];
+    damage(e, dmg, sh, dx, dy);
+    if (k === pierce - 1) end = pr;
+  }
+  if (structHit && hits.length < pierce) damageStruct(structHit, dmg, sh);
+  else if (!hits.length && end < range && SR.chance(0.4)) fx({ k: 'spark', x: x + dx * end, y: y + dy * end });
+  fx({ k: 'tr', x1: +x.toFixed(2), y1: +y.toFixed(2), x2: +(x + dx * end).toFixed(2), y2: +(y + dy * end).toFixed(2), c: color || 0 });
+}
+
+function fireGun(sh, wid, a, opt = {}) {
+  const w = WEAPONS[wid];
+  const mx = sh.x + Math.cos(a) * 0.45, my = sh.y + Math.sin(a) * 0.45;
+  const dmg = (sh.cat === 'player' ? wstat(wid, 'dmg') : w.dmg) * (opt.dmgMul || 1);
+  const spread = w.spread * (opt.spreadMul || 1) * (sh.in && sh.in.crouch ? 0.6 : 1);
+  if (w.rocket) {
+    G.shots.push({ k: 'rocket', x: mx, y: my, vx: Math.cos(a) * 16, vy: Math.sin(a) * 16, dmg, team: sh.team, owner: sh, life: 2 });
+  } else {
+    const n = w.pellets || 1;
+    for (let k = 0; k < n; k++) {
+      const aa = a + (SR.f() + SR.f() - 1) * spread;
+      hitscan(sh, mx, my, aa, w.range * (n > 1 ? SR.r(0.75, 1) : 1), dmg, w.pierce || 1, wid === 'sniper' ? 2 : 0);
+    }
+  }
+  fx({ k: 'flash', x: +mx.toFixed(2), y: +my.toFixed(2), a: +a.toFixed(2) });
+  sfxAt(wid, sh.x, sh.y);
+  makeNoise(sh.x, sh.y, w.noise * (sh.in && sh.in.crouch ? 0.7 : 1), sh);
+}
+function melee(sh, dmg, range, arc) {
+  let hit = false;
+  for (const e of allActors()) {
+    if (!canHit(sh, e)) continue;
+    const d = dist(sh.x, sh.y, e.x, e.y);
+    if (d > range + e.r) continue;
+    if (Math.abs(angDiff(sh.angle, Math.atan2(e.y - sh.y, e.x - sh.x))) > arc / 2 && d > 0.6) continue;
+    damage(e, dmg, sh, (e.x - sh.x) / (d || 1), (e.y - sh.y) / (d || 1)); hit = true;
+  }
+  fx({ k: 'swing', x: sh.x, y: sh.y, a: +sh.angle.toFixed(2) });
+  sfxAt(hit ? 'chop' : 'swish', sh.x, sh.y);
+  return hit;
+}
+
+function explode(x, y, dmg, r, src) {
+  G.booms.push({ x, y, dmg, r, src, delay: 0 });
+}
+function processBooms() {
+  const list = G.booms; G.booms = [];
+  for (const b of list) {
+    if (b.delay-- > 0) { G.booms.push(b); continue; }
+    fx({ k: 'boom', x: +b.x.toFixed(2), y: +b.y.toFixed(2), r: b.r });
+    makeNoise(b.x, b.y, 22, null);
+    for (const e of allActors()) {
+      const d = dist(e.x, e.y, b.x, b.y);
+      if (d > b.r + e.r) continue;
+      const q = d / b.r, dm = q <= 0.5 ? b.dmg : q <= 0.75 ? b.dmg * 0.75 : b.dmg * 0.5;
+      const src = b.src || { team: 'none', cat: 'none' };
+      if (e.cat === 'player') { if (!e.down) { e.hp -= dm * 0.4; e.flash = 5; fx({ k: 'hurt', pid: e.pid }); if (e.hp <= 0) downPlayer(e); } }
+      else if (!(b.src && b.src.team === 'player' && e.team === 'player')) damage(e, dm, src, (e.x - b.x) / (d || 1), (e.y - b.y) / (d || 1));
+    }
+    const seen = new Set();
+    for (let yy = Math.floor(b.y - b.r); yy <= b.y + b.r; yy++) for (let xx = Math.floor(b.x - b.r); xx <= b.x + b.r; xx++) {
+      if (!inMap(xx, yy)) continue;
+      const s = W.structAt[idx(xx, yy)];
+      if (!s || seen.has(s) || dist(s.x, s.y, b.x, b.y) > b.r) continue;
+      seen.add(s);
+      if (s.type === 'barrel' || s.type === 'mine') { if (!s.dead) { s.dead = true; removeStruct(s); G.booms.push({ x: s.x, y: s.y, dmg: 150, r: 2.8, src: b.src, delay: 4 }); } }
+      else damageStruct(s, b.dmg * 0.6, b.src);
+    }
+  }
+}
+
+// ── players ────────────────────────────────────────────────────────────────
+function updatePlayer(p) {
+  if (!p || !p.joined) return;
+  p.flash = Math.max(0, p.flash - 1);
+  if (p.dead) return;
+  if (p.down) {
+    p.downT -= DT;
+    if (p.downT <= 0) { p.down = false; p.dead = true; say(`${p.name} 사망. 다음 아침 기지에서 부활합니다.`, '#ff6b5c', -1, 1);
+      if (!alivePlayers().length) gameOver('dead'); }
+    return;
+  }
+  // survival stats
+  p.hunger = Math.max(0, p.hunger - 100 / (6.5 * 60 * FPS * 1.1));
+  if (p.hunger <= 0) { p.hp -= 0.6 * DT; if (p.hp <= 0) downPlayer(p); }
+  else if (p.hunger > 50 && p.hp < p.maxHp) p.hp = Math.min(p.maxHp, p.hp + 0.35 * DT);
+  if (p.healT > 0) { p.healT -= DT; p.hp = Math.min(p.maxHp, p.hp + 25 * DT); }
+  if (p.in.sprint && p.in.moving && p.stamina > 0) p.stamina = Math.max(0, p.stamina - 22 * DT);
+  else p.stamina = Math.min(100, p.stamina + 14 * DT);
+  if (p.in.moving) p.walk += 0.25;
+  p.angle = Math.atan2(p.in.ay, p.in.ax) || p.angle;
+
+  // weapon
+  const wid = p.wpn, w = WEAPONS[wid];
+  if (p.fireT > 0) p.fireT -= DT;
+  if (p.noAmmoT > 0) p.noAmmoT -= DT;
+  if (p.reloadT > 0) {
+    p.reloadT -= DT;
+    if (p.reloadT <= 0) finishReload(p);
+  } else {
+    const fire = p.in.fire && (w.auto || w.melee || !p.prevFire);
+    if (fire && p.fireT <= 0) {
+      if (w.melee) { melee(p, wstat(wid, 'dmg'), w.range, w.arc); p.fireT = w.rate; }
+      else if ((p.mag[wid] || 0) > 0) { p.mag[wid]--; fireGun(p, wid, p.angle); p.fireT = wstat(wid, 'rate'); }
+      else startReload(p, true);
+    }
+  }
+  p.prevFire = p.in.fire;
+
+  // interact (hold actions)
+  if (p.in.use) {
+    const it = findInteract(p, G);
+    if (it && !it.instant && !it.ui) {
+      if (p.useKey !== it.key) { p.useKey = it.key; p.useT = 0; }
+      p.useT += DT; p.useP = Math.min(1, p.useT / it.time); p.useLabel = it.label;
+      if (it.steal && G.tick % 8 === 0) checkWitness(p, it);
+      if (p.useT >= it.time) { completeInteract(p, it); p.useT = 0; }
+    } else { p.useT = 0; p.useKey = null; p.useP = 0; }
+  } else { p.useT = 0; p.useKey = null; p.useP = 0; }
+}
+function startReload(p, auto) {
+  const wid = p.wpn, w = WEAPONS[wid];
+  if (w.melee || p.reloadT > 0) return;
+  if ((p.mag[wid] || 0) >= magCap(wid)) return;
+  const spare = G.stash.mags[wid] || [];
+  if (!spare.length) {
+    if (p.noAmmoT <= 0) { say(`${w.name} 예비 탄창이 없습니다 — 상인에게 구매하세요`, '#ff9a8a', p.pid); sfxAt('empty', p.x, p.y); p.noAmmoT = 1.2; }
+    return;
+  }
+  p.reloadT = wstat(wid, 'reload'); p.reloadW = wid;
+  sfxAt('reload', p.x, p.y);
+}
+// magazines are real: the fullest spare goes in, the partial one goes back to the pouch
+function finishReload(p) {
+  const wid = p.reloadW; p.reloadT = 0;
+  if (wid !== p.wpn) return;
+  const spare = G.stash.mags[wid] || [];
+  if (!spare.length) return;
+  let bi = 0; for (let k = 1; k < spare.length; k++) if (spare[k] > spare[bi]) bi = k;
+  const m = spare.splice(bi, 1)[0];
+  const cur = p.mag[wid] || 0;
+  if (cur > 0) spare.push(cur);
+  p.mag[wid] = m;
+}
+
+// ── interaction (shared by host and guest so both see the same prompt) ──────
+function findInteract(p, S, onlyInstant) {
+  if (!p || p.down || p.dead) return null;
+  let best = null, bs = 1e9;
+  const consider = (o, d) => {
+    if (onlyInstant && !o.instant) return;
+    const s = d - (Math.abs(angDiff(p.angle, Math.atan2(o.y - p.y, o.x - p.x))) < 1 ? 0.4 : 0);
+    if (s < bs) { bs = s; best = o; }
+  };
+  for (const q of S.players) if (q && q !== p && q.down && !q.dead) { const d = dist(p.x, p.y, q.x, q.y); if (d < 1.6) consider({ key: 'rev' + q.pid, kind: 'revive', q, x: q.x, y: q.y, time: 3, label: `${q.name} 살리는 중` }, d - 1); }
+  for (const b of S.drops) { const d = dist(p.x, p.y, b.x, b.y); if (d < 1.3) consider({ key: 'd' + b.id, kind: 'drop', b, x: b.x, y: b.y, instant: true, label: `줍기${b.from ? ' — ' + b.from + '의 소지품' : ''}` }, d - 0.5); }
+  for (const e of S.ents) {
+    if (e.dead) continue;
+    const d = dist(p.x, p.y, e.x, e.y);
+    if (d > 1.8) continue;
+    if (e.kind === 'survivor') {
+      const lbl = e.mode === 'wait' ? '구출하기 (합류)' : e.mode === 'follow' ? '여기서 경계 명령' : '따라오기 명령';
+      consider({ key: 'sv' + e.id, kind: 'survivor', e, x: e.x, y: e.y, instant: true, label: `${SURVIVOR_NAMES[e.name]}(${PERKS[e.perk].name}) — ${lbl}` }, d);
+    } else if (e.def.shop) {
+      const hostileNow = e.team === 'merchant' ? S.merchantHostile : S.vh[e.village] > 0;
+      if (!hostileNow) consider({ key: 'shop' + e.id, kind: 'shop', e, x: e.x, y: e.y, ui: 'shop', label: `${e.def.name}과 거래` }, d);
+    }
+  }
+  const cx = Math.floor(p.x), cy = Math.floor(p.y);
+  for (let yy = cy - 2; yy <= cy + 2; yy++) for (let xx = cx - 2; xx <= cx + 2; xx++) {
+    if (!inMap(xx, yy)) continue;
+    const i = idx(xx, yy);
+    const c = W.contAt[i];
+    if (c && !c.looted) {
+      const d = Math.max(0, dist(p.x, p.y, xx + 0.5, yy + 0.5) - 0.5);
+      if (d < 1.1) {
+        const steal = c.village >= 0 && !(S.vh[c.village] > 0 && villageEmpty(S, c.village));
+        const CD = CONTAINERS[c.kind];
+        consider({ key: 'c' + c.id, kind: 'cont', c, x: c.x, y: c.y, time: CD.time * (steal && p.in.crouch ? 1.3 : 1), steal, label: steal ? `${CD.name} 훔치기 (들키면 전투!)` : `${CD.name} 뒤지기` }, d);
+      }
+    }
+    if (W.tile[i] === T.TREE) {
+      const d = dist(p.x, p.y, xx + 0.5, yy + 0.5) - 0.5;
+      if (d < 0.9) consider({ key: 't' + i, kind: 'tree', i, x: xx + 0.5, y: yy + 0.5, time: 2.2, label: '나무 베기 (목재)' }, d + 0.6);
+    }
+    const s = W.structAt[i];
+    if (s && s.type !== 'mine') {
+      const d = dist(p.x, p.y, xx + 0.5, yy + 0.5) - 0.5;
+      if (d > 1.0) continue;
+      if (s.type === 'bench') consider({ key: 'bench', kind: 'bench', x: s.x, y: s.y, ui: 'bench', label: '작업대 — 무기 강화' }, d);
+      else if (s.type === 'turret' && s.ammo < 300) consider({ key: 'ta' + s.id, kind: 'turret', s, x: s.x, y: s.y, time: 0.8, label: `포탑 탄약 보충 (고철 5 → +100) [${s.ammo}]` }, d);
+      else if (s.hp < s.maxHp) consider({ key: 'rp' + s.id, kind: 'repair', s, x: s.x, y: s.y, time: 0.6, label: `${s.def.name} 수리 (${s.type === 'core' ? '고철 5' : s.type === 'wall_metal' || s.type === 'turret' ? '고철 2' : '목재 2'})` }, d + 0.3);
+    }
+  }
+  return best;
+}
+const villageEmpty = (S, v) => !S.ents.some(e => !e.dead && e.team === 'village' && e.village === v && e.kind !== 'villager');
+
+function interactTap(p) {
+  const it = findInteract(p, G, true);
+  if (!it || !it.instant) return;
+  if (it.kind === 'drop') {
+    const b = it.b;
+    for (const k in b.items) giveItem(k, b.items[k], p.pid, b.x, b.y - 0.3 * Object.keys(b.items).indexOf(k));
+    G.drops.splice(G.drops.indexOf(b), 1);
+    sfxAt('pickup', b.x, b.y);
+  } else if (it.kind === 'survivor') {
+    const e = it.e, nm = SURVIVOR_NAMES[e.name];
+    if (e.mode === 'wait') { e.mode = 'follow'; e.follow = p.pid; say(`${nm}(${PERKS[e.perk].name}) 합류! ${PERKS[e.perk].desc}`, '#7dff9a', -1, 1); sfxAt('unlock', e.x, e.y); }
+    else if (e.mode === 'follow') { e.mode = 'guard'; e.home = { x: e.x, y: e.y }; say(`${nm}: 여기를 지키겠습니다.`, '#cfe8ff', p.pid); }
+    else { e.mode = 'follow'; e.follow = p.pid; say(`${nm}: 따라가겠습니다.`, '#cfe8ff', p.pid); }
+  }
+}
+function completeInteract(p, it) {
+  const S = G.stash;
+  switch (it.kind) {
+    case 'revive': it.q.down = false; it.q.hp = 40; say(`${it.q.name} 부활!`, '#7dff9a'); break;
+    case 'cont': {
+      const c = it.c; c.looted = true; fx({ k: 'cont', id: c.id, v: 1 });
+      const items = rollLoot(c.kind);
+      let n = 0; for (const k in items) giveItem(k, items[k], p.pid, c.x, c.y - 0.35 * n++);
+      if (!n) fx({ k: 'float', x: c.x, y: c.y, text: '비어 있음', c: '#999' });
+      sfxAt('pickup', c.x, c.y);
+      if (it.steal) checkWitness(p, it, true);
+      break;
+    }
+    case 'tree': {
+      W.tile[it.i] = T.STUMP; G.tileDiff[it.i] = T.STUMP; updateCellMB(it.i); flowBaseDirty = true;
+      fx({ k: 'tile', i: it.i, v: T.STUMP });
+      giveItem('wood', 4 + SR.i(3), p.pid, it.x, it.y); sfxAt('chop', it.x, it.y); makeNoise(it.x, it.y, 5, p);
+      p.useKey = null;
+      break;
+    }
+    case 'turret': if (S.scrap >= 5) { S.scrap -= 5; it.s.ammo = Math.min(400, it.s.ammo + 100); sfxAt('reload', it.s.x, it.s.y); } else say('고철이 부족합니다', '#ff9a8a', p.pid); break;
+    case 'repair': {
+      const s = it.s, core = s.type === 'core', metal = s.type === 'wall_metal' || s.type === 'turret';
+      const res = core || metal ? 'scrap' : 'wood', amt = core ? 5 : 2;
+      if (S[res] < amt) { say(`${ITEMS[res].name}가 부족합니다`, '#ff9a8a', p.pid); break; }
+      S[res] -= amt; s.hp = Math.min(s.maxHp, s.hp + (core ? 150 : s.maxHp * 0.25)); sfxAt('place', s.x, s.y);
+      break;
+    }
+  }
+}
+// stealing: any villager/guard/trader who can see the thief raises the alarm
+function checkWitness(p, it, final) {
+  const v = it.c.village;
+  if (v < 0 || G.vh[v] > 0) return;
+  const night = G.phase === 'night';
+  for (const e of G.ents) {
+    if (e.dead || e.team !== 'village' || e.village !== v) continue;
+    const range = (p.in.crouch ? 4.5 : 8) * (night ? 0.65 : 1);
+    const d = dist(e.x, e.y, p.x, p.y);
+    if (d > range) continue;
+    const facing = Math.abs(angDiff(e.angle, Math.atan2(p.y - e.y, p.x - e.x))) < 1.15;
+    if ((facing || d < 2) && los(e.x, e.y, p.x, p.y)) {
+      e.alert = 3; e.target = p; e.seenT = G.t;
+      villageHostile(v, '절도');
+      return;
+    }
+  }
+  if (final) say('들키지 않고 훔쳤습니다…', '#9fe6a0', p.pid);
+}
+function villageHostile(v, why) {
+  G.vh[v] = 3;
+  const V = W.villages[v];
+  say(`${why} 발각! ${V.name}이(가) 적대적으로 변했습니다!`, '#ff5c4c', -1, 1);
+  sfxAt('alarm', V.x + V.w / 2, V.y + V.h / 2);
+  for (const e of G.ents) if (e.team === 'village' && e.village === v) e.alert = 3;
+}
+
+// ── commands from either peer ──────────────────────────────────────────────
+function doCmd(pid, c) {
+  const p = G.players[pid]; if (!p || G.over) return;
+  const S = G.stash;
+  switch (c.c) {
+    case 'wpn': if (S.owned[c.w] && p.wpn !== c.w && !p.down) { p.wpn = c.w; p.reloadT = 0; p.fireT = 0.15; if (p.mag[c.w] === undefined) p.mag[c.w] = 0; sfxAt('switch', p.x, p.y); } break;
+    case 'reload': if (!p.down) startReload(p); break;
+    case 'tap': interactTap(p); break;
+    case 'eat':
+      if (S.food <= 0) say('식량이 없습니다', '#ff9a8a', pid);
+      else if (p.hunger > 92) say('배가 부릅니다', '#ccc', pid);
+      else { S.food--; p.hunger = Math.min(100, p.hunger + 40); sfxAt('eat', p.x, p.y); }
+      break;
+    case 'heal':
+      if (S.meds <= 0) say('의약품이 없습니다', '#ff9a8a', pid);
+      else if (p.hp >= p.maxHp) say('체력이 가득합니다', '#ccc', pid);
+      else { S.meds--; p.healT = 2; sfxAt('eat', p.x, p.y); }
+      break;
+    case 'grenade': {
+      if (S.grenade <= 0 || p.down) { say('수류탄이 없습니다', '#ff9a8a', pid); break; }
+      S.grenade--;
+      const d = clamp(c.d || 6, 2, 9), a = p.angle, sp = d * 0.95;
+      G.shots.push({ k: 'grenade', x: p.x, y: p.y, z: 0.6, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, vz: 3.2, life: 1.9, dmg: 160, team: 'player', owner: p });
+      sfxAt('throw', p.x, p.y);
+      break;
+    }
+    case 'build': {
+      const def = STRUCTS[c.t]; if (!def) break;
+      if (!canPlace(c.t, c.cell)) { say('여기에는 지을 수 없습니다', '#ff9a8a', pid); break; }
+      if (!canAfford(def.cost)) { say('재료가 부족합니다', '#ff9a8a', pid); break; }
+      pay(def.cost); const s = addStruct(c.t, [c.cell]);
+      fx({ k: 'float', x: s.x, y: s.y, text: def.name, c: '#cfe8ff' }); sfxAt('place', s.x, s.y);
+      break;
+    }
+    case 'demolish': {
+      const s = W.structAt[c.cell];
+      if (!s || s.type === 'core' || s.type === 'bench') break;
+      const def = STRUCTS[s.type], f = 0.5 * s.hp / s.maxHp;
+      for (const k in def.cost) S[k] += Math.floor(def.cost[k] * f);
+      removeStruct(s); sfxAt('place', s.x, s.y);
+      break;
+    }
+    case 'buy': case 'sell': {
+      const e = G.ents.find(q => q.id === c.npc);
+      if (!e || e.dead || !e.def.shop || dist(e.x, e.y, p.x, p.y) > 3.5) break;
+      if (e.team === 'merchant' ? G.merchantHostile : G.vh[e.village] > 0) break;
+      const n = Math.max(1, c.n | 0), price = priceOf(c.item);
+      if (c.c === 'buy') {
+        if ((e.stock[c.item] || 0) < n) { say('재고가 없습니다', '#ff9a8a', pid); break; }
+        if (c.item.startsWith('wpn:') && S.owned[c.item.slice(4)]) { say('이미 가진 무기입니다', '#ccc', pid); break; }
+        if (S.cash < price * n) { say('돈이 부족합니다', '#ff9a8a', pid); break; }
+        S.cash -= price * n; e.stock[c.item] -= n; e.stock.cash = (e.stock.cash || 0) + price * n;
+        giveItem(c.item, n, pid); sfxAt('buy', p.x, p.y);
+      } else {
+        if (!SELLABLE.includes(c.item) || (S[c.item] || 0) < n) break;
+        const gain = Math.floor(price / 2) * n;
+        if ((e.stock.cash || 0) < gain) { say('상인의 돈이 부족합니다', '#ff9a8a', pid); break; }
+        S[c.item] -= n; S.cash += gain; e.stock[c.item] = (e.stock[c.item] || 0) + n; e.stock.cash -= gain; sfxAt('buy', p.x, p.y);
+      }
+      break;
+    }
+    case 'upg': {
+      if (!S.owned[c.w] || !UPG_STATS[c.s] || dist(p.x, p.y, G.bench.x, G.bench.y) > 3.5) break;
+      if (c.s === 'mag' && WEAPONS[c.w].melee) break;
+      if ((c.s === 'reload' || c.s === 'mag') && WEAPONS[c.w].melee) break;
+      const u = S.upg[c.w] || (S.upg[c.w] = { dmg: 0, mag: 0, rate: 0, reload: 0 });
+      if (u[c.s] >= UPG_MAX) break;
+      const cost = upgCost(c.w, u[c.s]);
+      if (!canAfford(cost)) { say('재료가 부족합니다', '#ff9a8a', pid); break; }
+      pay(cost); u[c.s]++;
+      say(`${WEAPONS[c.w].name} ${UPG_STATS[c.s].name} Lv.${u[c.s]}`, '#ffd166', pid); sfxAt('unlock', p.x, p.y);
+      break;
+    }
+  }
+}
+
+// ── mobs ───────────────────────────────────────────────────────────────────
+function stepToward(e, tx, ty, sp) {
+  const dx = tx - e.x, dy = ty - e.y, d = Math.hypot(dx, dy);
+  if (d < 0.01) return true;
+  const s = Math.min(sp * DT, d);
+  const before = e.x + e.y;
+  const ok = moveActor(e, dx / d * s, dy / d * s);
+  e.angle = Math.atan2(dy, dx);
+  e.walk += s * 4;
+  if (!ok && Math.abs(e.x + e.y - before) < s * 0.2) e.stuckT += DT; else e.stuckT = Math.max(0, e.stuckT - DT);
+  return ok;
+}
+// follow a flow field one cell at a time; returns a struct blocking the way (to attack) or null
+function flowMove(e, field, sp) {
+  const cx = Math.floor(e.x), cy = Math.floor(e.y), c = idx(cx, cy);
+  let best = -1, bv = field[c];
+  if (bv >= FLOW_INF) return { lost: true };
+  for (const [dx, dy] of N8) {
+    const nx = cx + dx, ny = cy + dy; if (!inMap(nx, ny)) continue;
+    const ni = idx(nx, ny), m = W.mb[ni];
+    if (m & (MB_TERRAIN | MB_OBJ)) continue;
+    if (dx && dy && ((W.mb[idx(nx, cy)] | W.mb[idx(cx, ny)]) & (MB_TERRAIN | MB_OBJ | MB_STRUCT))) continue;
+    if (field[ni] < bv) { bv = field[ni]; best = ni; }
+  }
+  if (best < 0) return { arrived: true };
+  const s = W.structAt[best];
+  if (s && s.def.block) return { struct: s };
+  // steer to the next cell centre, with a little lookahead so motion is smooth
+  stepToward(e, cellX(best) + 0.5, cellY(best) + 0.5, sp);
+  return {};
+}
+function perceive(e, range) {
+  let best = null, bd = range;
+  const consider = t => {
+    if (!hostile(e, t)) return;
+    const d = dist(e.x, e.y, t.x, t.y);
+    if (d >= bd) return;
+    if (d > 2.5 && !los(e.x, e.y, t.x, t.y)) return;
+    bd = d; best = t;
+  };
+  for (const p of G.players) if (p && p.joined && !p.dead) consider(p);
+  for (const t of G.ents) if (t.cat === 'human') consider(t);
+  if (e.cat === 'human') for (const t of G.ents) if (t.cat === 'mob') consider(t);
+  return best;
+}
+function updateMob(e) {
+  const d0 = e.def;
+  e.flash = Math.max(0, e.flash - 1);
+  e.atkAnim = Math.max(0, e.atkAnim - DT * 3);
+  if (e.atkT > 0) e.atkT -= DT;
+  if (e.spitT > 0) e.spitT -= DT;
+  if (Math.abs(e.vx) + Math.abs(e.vy) > 0.002) { moveActor(e, e.vx, e.vy); e.vx *= 0.7; e.vy *= 0.7; return; }
+  const night = G.phase === 'night';
+  if ((G.tick + e.id) % 12 === 0) {
+    const t = perceive(e, (night ? 6.5 : 8) * (d0.low ? 0.7 : 1));
+    if (t) {
+      if (!e.target && d0.scream && !e.screamed) scream(e);
+      e.target = t; e.seenT = G.t;
+    }
+  }
+  let t = e.target;
+  if (t && (t.dead || (t.cat === 'player' && (t.down || !t.joined)) || G.t - e.seenT > 7 || !hostile(e, t))) { t = e.target = null; }
+  const sp = e.speed * (onSpikes(e) ? 0.45 : 1);
+
+  if (t) {
+    const d = dist(e.x, e.y, t.x, t.y);
+    const ranged = d0.spit || d0.fire;
+    if (ranged && e.spitT <= 0 && d < ranged.range && d > 1.6 && los(e.x, e.y, t.x, t.y)) {
+      const a = Math.atan2(t.y - e.y, t.x - e.x) + SR.r(-0.06, 0.06);
+      e.angle = a; e.spitT = ranged.rate; e.atkAnim = 1;
+      G.shots.push({ k: d0.fire ? 'fireball' : 'spit', x: e.x + Math.cos(a) * 0.5, y: e.y + Math.sin(a) * 0.5, vx: Math.cos(a) * ranged.speed, vy: Math.sin(a) * ranged.speed,
+                     dmg: ranged.dmg, team: 'zombie', owner: e, life: 2.5 });
+      sfxAt(d0.fire ? 'fireball' : 'spit', e.x, e.y);
+      return;
+    }
+    if (d < d0.reach + t.r) {
+      e.angle = Math.atan2(t.y - e.y, t.x - e.x);
+      if (d0.explode) { kill(e, null); return; }
+      if (e.atkT <= 0) { e.atkT = d0.atk; e.atkAnim = 1; damage(t, d0.dmg, e, (t.x - e.x) / (d || 1), (t.y - e.y) / (d || 1)); sfxAt('bite', e.x, e.y); }
+      return;
+    }
+    if (d0.spit && d < 3.5 && los(e.x, e.y, t.x, t.y)) { stepToward(e, e.x - (t.x - e.x), e.y - (t.y - e.y), sp * 0.8); return; }
+    if (t.cat === 'player' && (d > 8 || e.stuckT > 0.5 || !los(e.x, e.y, t.x, t.y))) {
+      const r = flowMove(e, flowPl, sp);
+      if (r.struct) return attackStruct(e, r.struct);
+      if (!r.lost) return;
+    }
+    stepToward(e, t.x, t.y, sp);
+    if (e.stuckT > 1.5) { const r = flowMove(e, flowBase, sp); if (r.struct) attackStruct(e, r.struct); }
+    return;
+  }
+  if (night || e.wave) {
+    const r = flowMove(e, flowBase, sp);
+    if (r.struct) return attackStruct(e, r.struct);
+    if (!r.lost && !r.arrived) return;
+  }
+  if (e.invest) {
+    if (G.t > e.invest.t || dist(e.x, e.y, e.invest.x, e.invest.y) < 1) e.invest = null;
+    else { stepToward(e, e.invest.x, e.invest.y, sp * 0.8); if (e.stuckT > 1) e.invest = null; return; }
+  }
+  // idle wander
+  if ((e.wanderT -= DT) <= 0) { e.wanderT = SR.r(2, 5); const a = SR.r(0, TAU), r = SR.r(1, 4); e.wx = e.x + Math.cos(a) * r; e.wy = e.y + Math.sin(a) * r; if (SR.chance(0.4)) { e.wx = e.x; e.wy = e.y; } }
+  stepToward(e, e.wx, e.wy, sp * 0.35);
+}
+function attackStruct(e, s) {
+  e.angle = Math.atan2(s.y - e.y, s.x - e.x);
+  if (e.def.explode) { kill(e, null); return; }
+  if (e.atkT > 0) return;
+  const dmg = e.cat === 'mob' ? e.def.dmg * (e.def.structMul || 1) : 14;
+  e.atkT = e.cat === 'mob' ? e.def.atk : 1.0; e.atkAnim = 1;
+  damageStruct(s, dmg, e);
+  sfxAt(s.type === 'wall_metal' ? 'clang' : 'thud', s.x, s.y);
+}
+function scream(e) {
+  e.screamed = true; e.atkAnim = 1;
+  fx({ k: 'scream', x: e.x, y: e.y });
+  sfxAt('scream', e.x, e.y);
+  makeNoise(e.x, e.y, 18, null);
+  for (let k = 0; k < 3; k++) { const p = randomFreeCell(SR, e.x - 3, e.y - 3, e.x + 3, e.y + 3); if (p) spawnMob('runner', p.x, p.y, true); }
+}
+function onSpikes(e) {
+  const s = W.structAt[idx(Math.floor(e.x), Math.floor(e.y))];
+  return s && s.type === 'spikes';
+}
+
+// ── humans ─────────────────────────────────────────────────────────────────
+function pathTo(e, tx, ty, sp) {
+  const d = dist(e.x, e.y, tx, ty);
+  if (d < 0.25) return true;
+  if (d < 5 && los(e.x, e.y, tx, ty) && e.stuckT < 0.4) { stepToward(e, tx, ty, sp); return false; }
+  const goalKey = Math.floor(tx) + ',' + Math.floor(ty);
+  if (!e.path || G.t > e.pathT || e.pathGoal !== goalKey || e.stuckT > 0.6) {
+    e.path = findPath(e.x, e.y, tx, ty, e.team, 2500); e.pathT = G.t + 1 + SR.f(); e.pathGoal = goalKey; e.stuckT = 0;
+  }
+  while (e.path.length && dist(e.x, e.y, cellX(e.path[0]) + 0.5, cellY(e.path[0]) + 0.5) < 0.3) e.path.shift();
+  if (!e.path.length) { stepToward(e, tx, ty, sp); return false; }
+  const n = e.path[0];
+  const s = W.structAt[n];
+  if (s && s.def.block && cellBlocked(n, e.team)) { e.blockStruct = s; return false; }
+  stepToward(e, cellX(n) + 0.5, cellY(n) + 0.5, sp);
+  return false;
+}
+function npcFire(e, t) {
+  const w = WEAPONS[e.wpn];
+  if (e.reloadT > 0) { e.reloadT -= DT; if (e.reloadT <= 0) e.mag = w.mag; return; }
+  if (e.fireT > 0) return;
+  const want = Math.atan2(t.y - e.y, t.x - e.x);
+  if (Math.abs(angDiff(e.angle, want)) > 0.25) return;
+  if (w.melee) { if (dist(e.x, e.y, t.x, t.y) < w.range + t.r) { melee(e, w.dmg * 0.6, w.range, w.arc); e.fireT = w.rate * 2; } return; }
+  if (e.mag <= 0) { e.reloadT = w.reload * 1.3; return; }
+  e.mag--;
+  const ally = e.team === 'player', perk = e.perk === 'guard' ? 1.4 : 1;
+  fireGun(e, e.wpn, e.angle, { spreadMul: 2.4 / e.def.acc / perk, dmgMul: (ally ? 0.8 : t.cat === 'player' ? 0.45 : 0.7) * perk });
+  e.fireT = w.rate * (w.auto ? 1.5 : 2.2) * SR.r(0.9, 1.3);
+}
+function updateHuman(e) {
+  const d0 = e.def;
+  e.flash = Math.max(0, e.flash - 1);
+  e.atkAnim = Math.max(0, e.atkAnim - DT * 3);
+  if (e.fireT > 0) e.fireT -= DT;
+  if (e.alert > 0) e.alert -= DT;
+  if (Math.abs(e.vx) + Math.abs(e.vy) > 0.002) { moveActor(e, e.vx, e.vy); e.vx *= 0.7; e.vy *= 0.7; }
+  const night = G.phase === 'night';
+  if ((G.tick + e.id) % 10 === 0) {
+    const t = perceive(e, (e.kind === 'bandit_sniper' ? 14 : e.kind === 'guard' ? 11 : 9) * (night ? 0.75 : 1));
+    if (t && (!e.target || dist(e.x, e.y, t.x, t.y) < dist(e.x, e.y, e.target.x, e.target.y) - 1)) { e.target = t; e.seenT = G.t; }
+    else if (e.target && !e.target.dead && los(e.x, e.y, e.target.x, e.target.y) && dist(e.x, e.y, e.target.x, e.target.y) < 14) e.seenT = G.t;
+    // "eye" indicator: a villager who could catch you stealing
+    e.sees = false;
+    if (e.team === 'village' && G.vh[e.village] <= 0) {
+      for (const p of G.players) if (p && p.joined && !p.dead) {
+        const d = dist(e.x, e.y, p.x, p.y), range = (p.in.crouch ? 4.5 : 8) * (night ? 0.65 : 1);
+        if (d < range && (Math.abs(angDiff(e.angle, Math.atan2(p.y - e.y, p.x - e.x))) < 1.15 || d < 2) && los(e.x, e.y, p.x, p.y)) e.sees = true;
+      }
+    }
+  }
+  let t = e.target;
+  if (t && (t.dead || G.t - e.seenT > 6 || !hostile(e, t))) t = e.target = null;
+  const hpk = e.hp / e.maxHp;
+  const sp = e.speed;
+
+  // flee: civilians, or badly hurt non-bosses
+  if (t && (d0.coward || (hpk < 0.3 && !d0.boss && e.kind !== 'guard' && e.team !== 'player' && !d0.shop))) {
+    const a = Math.atan2(e.y - t.y, e.x - t.x);
+    pathTo(e, e.x + Math.cos(a) * 6, e.y + Math.sin(a) * 6, sp * 1.1);
+    if (e.team === 'village') e.alert = 1;
+    return;
+  }
+  if (t && e.wpn) return combat(e, t);
+  if (e.kind === 'villager' && e.village >= 0 && G.vh[e.village] > 0) {
+    // stay indoors / away from players when the village is hostile
+    const p = G.players.find(q => q && q.joined && !q.dead && dist(q.x, q.y, e.x, e.y) < 7);
+    if (p) { const a = Math.atan2(e.y - p.y, e.x - p.x); pathTo(e, e.x + Math.cos(a) * 5, e.y + Math.sin(a) * 5, sp); return; }
+  }
+  // idle roles
+  switch (e.kind === 'survivor' ? e.mode : e.team) {
+    case 'wait': {
+      const z = G.ents.find(m => m.cat === 'mob' && dist(m.x, m.y, e.x, e.y) < 3);
+      if (z) { const a = Math.atan2(e.y - z.y, e.x - z.x); stepToward(e, e.x + Math.cos(a), e.y + Math.sin(a), sp * 0.6); }
+      return;
+    }
+    case 'follow': {
+      const p = G.players[e.follow] && !G.players[e.follow].dead ? G.players[e.follow] : alivePlayers()[0];
+      if (!p) return;
+      if (dist(e.x, e.y, p.x, p.y) > 2.4) pathTo(e, p.x, p.y, sp * (dist(e.x, e.y, p.x, p.y) > 6 ? 1.3 : 1));
+      else e.angle += angDiff(e.angle, p.angle) * 0.05;
+      return;
+    }
+    case 'guard': if (dist(e.x, e.y, e.home.x, e.home.y) > 0.6) pathTo(e, e.home.x, e.home.y, sp); return;
+    case 'bandit': {
+      if (e.mode === 'raid') {
+        const r = flowMove(e, flowBase, sp);
+        if (r.struct) { e.angle = Math.atan2(r.struct.y - e.y, r.struct.x - e.x); if (e.fireT <= 0) { e.fireT = 0.9; e.atkAnim = 1; damageStruct(r.struct, 22, e); sfxAt(e.wpn === 'machete' ? 'thud' : 'pistol', e.x, e.y); } }
+        return;
+      }
+      return wanderIn(e, W.camps[e.camp], sp * 0.5);
+    }
+    case 'village': {
+      if (e.def.shop) { if (dist(e.x, e.y, e.home.x, e.home.y) > 0.5) pathTo(e, e.home.x, e.home.y, sp); else faceNearestPlayer(e); return; }
+      return wanderIn(e, W.villages[e.village], sp * 0.45);
+    }
+    case 'merchant': {
+      if (G.phase !== 'day' && G.phase !== 'dawn') { pathTo(e, W.base.cx + 0.5, 0.5, sp); if (e.y < 2) { e.dead = true; } return; }
+      if (dist(e.x, e.y, e.home.x, e.home.y) > 0.5) pathTo(e, e.home.x, e.home.y, sp); else faceNearestPlayer(e);
+      return;
+    }
+  }
+}
+function faceNearestPlayer(e) {
+  const p = G.players.filter(q => q && q.joined && !q.dead).sort((a, b) => dist(a.x, a.y, e.x, e.y) - dist(b.x, b.y, e.x, e.y))[0];
+  if (p && dist(p.x, p.y, e.x, e.y) < 6) e.angle += angDiff(e.angle, Math.atan2(p.y - e.y, p.x - e.x)) * 0.1;
+}
+function wanderIn(e, area, sp) {
+  if (!area) return;
+  if ((e.wanderT -= DT) <= 0) {
+    e.wanderT = SR.r(3, 8);
+    const p = randomFreeCell(SR, area.x + 1, area.y + 1, area.x + area.w - 1, area.y + area.h - 1, e.team);
+    if (p && SR.chance(0.7)) { e.wx = p.x; e.wy = p.y; } else { e.wx = e.x; e.wy = e.y; }
+  }
+  if (dist(e.x, e.y, e.wx, e.wy) > 0.4) pathTo(e, e.wx, e.wy, sp);
+  else if (SR.chance(0.01)) e.angle += SR.r(-1.5, 1.5);
+}
+function combat(e, t) {
+  const w = WEAPONS[e.wpn], d = dist(e.x, e.y, t.x, t.y);
+  const see = los(e.x, e.y, t.x, t.y);
+  const want = Math.atan2(t.y - e.y, t.x - e.x);
+  e.angle += clamp(angDiff(e.angle, want), -0.2, 0.2);
+  const sp = e.speed;
+  // survivors on guard duty don't wander off chasing
+  const leash = e.kind === 'survivor' && e.mode === 'guard' ? 1 : e.kind === 'survivor' ? 0.5 : 0;
+  if (w.melee) {
+    if (d > w.range + t.r - 0.2) pathTo(e, t.x, t.y, sp * 1.1);
+    npcFire(e, t);
+    return;
+  }
+  const pref = e.def.keepFar ? 11 : e.wpn === 'shotgun' ? 3.5 : Math.min(w.range * 0.5, 7);
+  if (!see || d > w.range * 0.9) {
+    if (leash === 1) return;
+    pathTo(e, t.x, t.y, sp);
+    if (e.blockStruct && e.team !== 'player') { const s = e.blockStruct; e.blockStruct = null; e.angle = Math.atan2(s.y - e.y, s.x - e.x); if (e.fireT <= 0) { e.fireT = 0.9; damageStruct(s, 18, e); sfxAt('thud', s.x, s.y); } }
+  } else if (d < pref - 2) {
+    stepToward(e, e.x - Math.cos(want), e.y - Math.sin(want), sp * 0.8);
+    e.angle = want;
+  } else if (leash !== 1) {
+    if ((e.strafeT -= DT) <= 0) { e.strafeT = SR.r(0.8, 2); e.strafe = SR.chance(0.5) ? 1 : -1; if (SR.chance(0.25)) e.strafe = 0; }
+    if (e.strafe) { const sa = want + e.strafe * Math.PI / 2; stepToward(e, e.x + Math.cos(sa), e.y + Math.sin(sa), sp * 0.55); e.angle = want; }
+  }
+  if (see) npcFire(e, t);
+}
+
+// ── shots ──────────────────────────────────────────────────────────────────
+function updateShots() {
+  const keep = [];
+  for (const s of G.shots) {
+    s.life -= DT;
+    if (s.k === 'grenade') {
+      s.vz -= 9 * DT; s.z += s.vz * DT;
+      if (s.z <= 0) { s.z = 0; s.vz = Math.abs(s.vz) * 0.35; s.vx *= 0.6; s.vy *= 0.6; if (s.vz < 0.6) s.vz = 0; }
+      const nx = s.x + s.vx * DT, ny = s.y + s.vy * DT;
+      if (blockedAt(nx, s.y, 'player') && s.z < 0.8) s.vx *= -0.4; else s.x = nx;
+      if (blockedAt(s.x, ny, 'player') && s.z < 0.8) s.vy *= -0.4; else s.y = ny;
+      if (s.life <= 0) { explode(s.x, s.y, s.dmg, 2.9, s.owner); continue; }
+    } else {
+      if (s.k === 'fireball') { s.vx *= 1.012; s.vy *= 1.012; }
+      const steps = 3; let hit = false;
+      for (let k = 0; k < steps && !hit; k++) {
+        const nx = s.x + s.vx * DT / steps, ny = s.y + s.vy * DT / steps;
+        const ci = inMap(Math.floor(nx), Math.floor(ny)) ? idx(Math.floor(nx), Math.floor(ny)) : -1;
+        if (ci < 0 || TILE_OPAQUE[W.tile[ci]]) hit = true;
+        else {
+          const st = W.structAt[ci];
+          if (st && st.def.block && s.team !== 'player') { hit = true; damageStruct(st, s.dmg * (s.k === 'rocket' ? 0 : 1), s.owner); }
+          if (st && st.type === 'barrel' && s.team === 'player') hit = true;
+          for (const e of allActors()) if (canHit(s.owner || { team: s.team }, e) && dist(nx, ny, e.x, e.y) < e.r + 0.15) { hit = true; if (s.k !== 'rocket') damage(e, s.dmg, s.owner, s.vx / 8, s.vy / 8); break; }
+        }
+        s.x = nx; s.y = ny;
+      }
+      if (hit || s.life <= 0) {
+        if (s.k === 'rocket') explode(s.x, s.y, s.dmg, 3, s.owner);
+        else fx({ k: s.k === 'spit' ? 'splat' : 'boom', x: s.x, y: s.y, r: 0.6, fire: 1 });
+        continue;
+      }
+    }
+    keep.push(s);
+  }
+  G.shots = keep;
+}
+
+// ── structures tick ────────────────────────────────────────────────────────
+function updateStructs() {
+  for (const s of G.structs.slice()) {
+    s.flash = Math.max(0, s.flash - 1);
+    if (s.type === 'turret') {
+      if (s.fireT > 0) s.fireT -= DT;
+      if ((G.tick + s.id) % 6 === 0) {
+        s.tgt = null; let bd = 9;
+        for (const e of G.ents) {
+          if (e.team !== 'zombie' && e.team !== 'bandit' && !(e.team === 'village' && G.vh[e.village] > 0)) continue;
+          const d = dist(s.x, s.y, e.x, e.y);
+          if (d < bd && los(s.x, s.y, e.x, e.y)) { bd = d; s.tgt = e; }
+        }
+      }
+      if (s.tgt && !s.tgt.dead) {
+        const want = Math.atan2(s.tgt.y - s.y, s.tgt.x - s.x);
+        s.angle += clamp(angDiff(s.angle, want), -0.25, 0.25);
+        if (s.ammo > 0 && s.fireT <= 0 && Math.abs(angDiff(s.angle, want)) < 0.15) {
+          s.ammo--; s.fireT = 0.16;
+          const sh = { team: 'player', cat: 'turret', x: s.x, y: s.y };
+          hitscan(sh, s.x + Math.cos(s.angle) * 0.5, s.y + Math.sin(s.angle) * 0.5, s.angle + SR.r(-0.04, 0.04), 9, 12, 1);
+          fx({ k: 'flash', x: s.x + Math.cos(s.angle) * 0.5, y: s.y + Math.sin(s.angle) * 0.5, a: s.angle });
+          sfxAt('turret', s.x, s.y);
+          makeNoise(s.x, s.y, 8, null);
+        }
+      }
+    } else if (s.type === 'spikes' || s.type === 'mine') {
+      const c = s.cells[0], x = cellX(c), y = cellY(c);
+      for (const e of G.ents) {
+        if (Math.floor(e.x) !== x || Math.floor(e.y) !== y || e.team === 'player' || e.team === 'village' || e.team === 'merchant') continue;
+        if (s.type === 'mine') { if (s.fuse < 0) { s.fuse = 0.3; sfxAt('beep', s.x, s.y); } }
+        else { damage(e, 26 * DT, { team: 'player', cat: 'trap' }); s.hp -= 3 * DT; if (s.hp <= 0) destroyStruct(s); }
+      }
+      if (s.fuse >= 0 && (s.fuse -= DT) < 0 && !s.dead) { s.dead = true; removeStruct(s); explode(s.x, s.y, 140, 2.7, { team: 'player', cat: 'trap' }); }
+    }
+  }
+  // survivors' perks (once a second)
+  if (G.tick % FPS === 0) {
+    for (const e of G.ents) {
+      if (e.kind !== 'survivor' || e.mode === 'wait' || e.dead) continue;
+      if (e.perk === 'mechanic' && inBase(e.x, e.y) && G.phase === 'day') {
+        const s = G.structs.filter(q => q.hp < q.maxHp && q.type !== 'bench').sort((a, b) => a.hp / a.maxHp - b.hp / b.maxHp)[0];
+        if (s) { s.hp = Math.min(s.maxHp, s.hp + (s.type === 'core' ? 15 : 10)); }
+      } else if (e.perk === 'medic') {
+        for (const p of G.players) if (p && p.joined && !p.dead && !p.down && dist(p.x, p.y, e.x, e.y) < 5) p.hp = Math.min(p.maxHp, p.hp + 2);
+        for (const o of G.ents) if (o.team === 'player' && dist(o.x, o.y, e.x, e.y) < 5) o.hp = Math.min(o.maxHp, o.hp + 2);
+      }
+    }
+  }
+}
+
+// ── day / night ────────────────────────────────────────────────────────────
+function phaseOf(c) { return c >= DAWN && c < DUSK ? 'day' : c >= DUSK && c < NIGHT ? 'dusk' : c >= LATE && c < DAWN ? 'dawn' : 'night'; }
+function updateClock() {
+  G.clock += MIN_PER_TICK;
+  if (G.clock >= 1440) G.clock -= 1440;
+  const ph = phaseOf(G.clock);
+  if (ph !== G.phase) {
+    G.phase = ph;
+    if (ph === 'dusk') say('해가 지고 있습니다… 기지로 돌아가 방어를 준비하세요!', '#ffb36b', -1, 1);
+    if (ph === 'night') startNight();
+    if (ph === 'dawn') say('곧 날이 밝습니다. 조금만 더 버티세요!', '#ffe9a8', -1, 1);
+    if (ph === 'day') startDay();
+  }
+  // bandit raid
+  if (G.raidAt >= 0 && G.phase === 'day' && G.clock >= G.raidAt) { G.raidAt = -1; startRaid(); }
+}
+function startNight() {
+  const n = ++G.nightN;
+  const total = Math.min(170, Math.round(14 + 9 * n + 1.6 * n * n));
+  const kinds = Object.keys(MOBS).filter(k => MOBS[k].minNight <= n);
+  const dirs = [0, 1, 2, 3].sort(() => SR.f() - 0.5).slice(0, n >= 6 ? 3 : n >= 3 ? 2 : 1);
+  const offs = [0.4, 2.2, 4.4, 6.6]; // game hours after 20:00
+  G.waves = offs.map((h, k) => ({ at: h * 60 / MIN_PER_TICK, n: Math.round(total / 4 * (k === 3 ? 1.3 : 1)), dir: dirs[k % dirs.length], kinds, k, boss: k === 3 && n % 5 === 0 }));
+  G.waveIdx = 0; G.nightTick = 0;
+  say(`${n}번째 밤 — 좀비 무리가 몰려옵니다!`, '#ff5c4c', -1, 1);
+  sfxAt('horn', W.base.cx, W.base.cy);
+}
+function startDay() {
+  G.day++;
+  say(`☀ ${G.day}일차 아침 — 밤을 버텨냈습니다!`, '#ffe9a8', -1, 1);
+  G.waves = []; G.spawnQ = [];
+  // respawn dead co-op players at the core
+  for (const p of G.players) if (p && p.dead) { p.dead = false; p.down = false; p.hp = 60; p.x = G.core.x + 0.5; p.y = G.core.y + 2.5; fx({ k: 'tp', pid: p.pid, x: p.x, y: p.y }); }
+  // survivors eat
+  const crew = G.ents.filter(e => e.kind === 'survivor' && e.mode !== 'wait');
+  for (const e of crew) {
+    if (G.stash.food > 0) { G.stash.food--; e.hunger = 0; }
+    else if (++e.hunger >= 2) { e.dead = true; say(`${SURVIVOR_NAMES[e.name]}이(가) 굶주림을 못 견디고 떠났습니다.`, '#ff8a7a'); }
+    else say(`${SURVIVOR_NAMES[e.name]}: 배가 고파요… (식량 부족)`, '#ffb36b');
+    if (!e.dead && e.perk === 'scavenger' && inBase(e.x, e.y)) {
+      const it = rollLoot(SR.pick(['crate', 'cabinet', 'shelf']));
+      for (const k in it) giveItem(k, it[k], -1);
+      say(`${SURVIVOR_NAMES[e.name]}(수집가)이 물자를 구해 왔습니다.`, '#9fe6a0');
+    }
+  }
+  // world refresh
+  for (let v = 0; v < G.vh.length; v++) if (G.vh[v] > 0 && --G.vh[v] === 0) say(`${W.villages[v].name}의 분노가 가라앉았습니다.`, '#9fe6a0');
+  for (const c of W.conts) if (c.looted && SR.chance(c.village >= 0 ? 0.6 : 0.2)) { c.looted = false; fx({ k: 'cont', id: c.id, v: 0 }); }
+  for (const e of G.ents) if (e.def.shop && e.kind === 'trader') e.stock = makeStock('trader', SR);
+  if (!G.ents.some(e => e.kind === 'merchant')) spawnMerchant();
+  else { const m = G.ents.find(e => e.kind === 'merchant'); m.stock = makeStock('merchant', SR); }
+  G.merchantHostile = false;
+  if (G.day % 3 === 0) for (const c of W.camps) {
+    const n = G.ents.filter(e => e.camp === c.id).length;
+    for (let k = n; k < 6; k++) { const p = randomFreeCell(SR, c.x + 2, c.y + 2, c.x + c.w - 2, c.y + c.h - 2, 'bandit'); if (p) spawnHuman(SR.pick(['bandit_thug', 'bandit_gunner', 'bandit_smg', 'bandit_shotgun']), p.x, p.y, { camp: c.id }); }
+  }
+  for (let k = 0; k < 1 + SR.i(2); k++) spawnSurvivor();
+  if (G.day >= 3 && SR.chance(0.45)) G.raidAt = (10 + SR.i(5)) * 60;
+}
+function startRaid() {
+  const n = Math.min(8, 3 + (G.day >> 1)), dir = SR.i(4), cells = W.spawnsEdge[dir];
+  for (let k = 0; k < n; k++) {
+    const c = SR.pick(cells);
+    const h = spawnHuman(SR.pick(['bandit_thug', 'bandit_gunner', 'bandit_smg', 'bandit_shotgun', 'bandit_gunner']), cellX(c) + 0.5, cellY(c) + 0.5, { mode: 'raid' });
+    h.mode = 'raid';
+  }
+  say(`약탈단 ${n}명이 ${['북', '동', '남', '서'][dir]}쪽에서 기지를 습격하러 옵니다!`, '#ff5c4c', -1, 1);
+  G.warn = { dir, t: 8 };
+  sfxAt('alarm', W.base.cx, W.base.cy);
+}
+function updateSpawns() {
+  if (G.phase === 'night' || G.phase === 'dawn') {
+    G.nightTick++;
+    const wv = G.waves[G.waveIdx];
+    if (wv && G.nightTick >= wv.at - 8 * FPS && !wv.warned) {
+      wv.warned = true; G.warn = { dir: wv.dir, t: 10 };
+      say(`웨이브 ${wv.k + 1}/4 — ${['북', '동', '남', '서'][wv.dir]}쪽에서 접근 중!${wv.boss ? ' 피의 악마 출현!' : ''}`, '#ff7a5c', -1, 1);
+    }
+    if (wv && G.nightTick >= wv.at) {
+      G.waveIdx++;
+      for (let k = 0; k < wv.n; k++) {
+        let tot = 0; for (const q of wv.kinds) tot += MOBS[q].w;
+        let r = SR.f() * tot, kind = 'walker';
+        for (const q of wv.kinds) if ((r -= MOBS[q].w) <= 0) { kind = q; break; }
+        G.spawnQ.push({ kind, dir: SR.chance(0.8) ? wv.dir : SR.i(4) });
+      }
+      if (wv.boss) G.spawnQ.push({ kind: 'fiend', dir: wv.dir });
+    }
+  }
+  if (G.spawnQ.length && G.tick % 5 === 0 && G.ents.length < 260) {
+    const q = G.spawnQ.shift(), cells = W.spawnsEdge[q.dir];
+    const c = SR.pick(cells);
+    if (c !== undefined) spawnMob(q.kind, cellX(c) + 0.5, cellY(c) + 0.5, true);
+  }
+  if (G.phase === 'day' && G.tick % (FPS * 4) === 0) {
+    const n = G.ents.filter(e => e.cat === 'mob' && !e.wave).length;
+    if (n < Math.min(90, 50 + G.day * 4)) spawnDayZombie();
+  }
+  if (G.warn && (G.warn.t -= DT) <= 0) G.warn = null;
+}
+
+// ── flows & separation ─────────────────────────────────────────────────────
+function updateFlows() {
+  if (--flowBaseCD <= 0 && flowBaseDirty) { flowBaseDirty = false; flowBaseCD = 25; flowField(flowBase, G.core.cells); }
+  if (--flowPlCD <= 0) {
+    const ps = alivePlayers(), key = ps.map(p => idx(Math.floor(p.x), Math.floor(p.y))).join(',');
+    if (key !== flowPlKey) { flowPlKey = key; flowPlCD = 8; flowField(flowPl, ps.map(p => idx(Math.floor(p.x), Math.floor(p.y)))); }
+  }
+}
+const sepGrid = new Map();
+function separate() {
+  sepGrid.clear();
+  for (const e of G.ents) { const k = (Math.floor(e.x / 2) << 8) | Math.floor(e.y / 2); let a = sepGrid.get(k); if (!a) sepGrid.set(k, a = []); a.push(e); }
+  for (const e of G.ents) {
+    const gx = Math.floor(e.x / 2), gy = Math.floor(e.y / 2);
+    for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) {
+      const a = sepGrid.get(((gx + ox) << 8) | (gy + oy)); if (!a) continue;
+      for (const o of a) {
+        if (o.id <= e.id) continue;
+        const dx = o.x - e.x, dy = o.y - e.y, d = Math.hypot(dx, dy), m = (e.r + o.r) * 0.85;
+        if (d >= m || d < 1e-4) continue;
+        const push = (m - d) * 0.5, nx = dx / d * push, ny = dy / d * push;
+        const we = e.def.heavy ? 0.2 : 1, wo = o.def.heavy ? 0.2 : 1;
+        moveActor(e, -nx * we, -ny * we); moveActor(o, nx * wo, ny * wo);
+      }
+    }
+  }
+  // mobs don't overlap players (the player's own position is authoritative on its owner)
+  for (const p of G.players) {
+    if (!p || !p.joined || p.dead) continue;
+    for (const e of G.ents) {
+      const dx = e.x - p.x, dy = e.y - p.y, d = Math.hypot(dx, dy), m = (e.r + p.r) * 0.9;
+      if (d < m && d > 1e-4) moveActor(e, dx / d * (m - d), dy / d * (m - d));
+    }
+  }
+}
+
+// ── main tick ─────────────────────────────────────────────────────────────
+function simTick() {
+  if (G.over) return;
+  G.tick++; G.t += DT;
+  updateClock();
+  updateFlows();
+  for (const p of G.players) updatePlayer(p);
+  for (const e of G.ents) if (!e.dead) (e.cat === 'mob' ? updateMob : updateHuman)(e);
+  separate();
+  updateShots();
+  updateStructs();
+  processBooms();
+  updateSpawns();
+  if (G.ents.some(e => e.dead)) G.ents = G.ents.filter(e => !e.dead);
+  for (const d of G.drops) d.ttl--;
+  if (G.tick % 50 === 0) G.drops = G.drops.filter(d => d.ttl > 0);
+}
