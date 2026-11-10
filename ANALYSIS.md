@@ -166,7 +166,7 @@ r2.GetTicks = function(index) {
     return Math.pow(index, 2.5) / 100000 * (FPS*3 - 3) + 3;   // x1 ≈ 3.0s, x30 ≈ 1.3s, x50 ≈ 0.6s, x70 ≈ 0.2s
 };
 ```
-배율이 특정 값에 처음 도달하면 그 값에 등록된 보상이 **한 번만** 지급됩니다 (`delete this.mMultipliers[index]`). 보상 테이블의 일부는 다음과 같습니다.
+배율이 특정 값에 도달하면 그 값에 등록된 보상 중 아직 받지 않은 것만 지급됩니다. 보상마다 `mActive` 플래그가 있어 **한 번만** 나옵니다 (`if (r2.mActive != true) { AddUpgrade(...); r2.mActive = true; }`). 배율은 1~999로 제한됩니다. 보상 테이블의 일부는 다음과 같습니다.
 ```actionscript
 AddToMultipliers(3,  {mClassID:"CThing_Weapon_Pistol",   mProp:"FastFire",     mName:"Pistol+: Fast Fire"});
 AddToMultipliers(5,  {mClassID:"CThing_Creature_Player", mProp:"NW_uzi",       mName:"New Weapon: UZI (Key 2)"});
@@ -198,27 +198,26 @@ r6 = Math.random() * r5;   // pick first entry with r6 < mChanceIndex
 
 ---
 
-## 4. 재구현 대응표
+## 4. 재구현: 시스템 1:1 이식
 
-| 원본 메커니즘 | Cell Siege 구현 (`game/main.js`) |
+`game/main.js`는 원본처럼 **50fps 고정 프레임**으로 돌고, 셀과 프레임 단위를 그대로 씁니다. 각 함수 위 주석에 원본 `Class.method` 이름을 적어 두었습니다.
+
+| 시스템 | 원본 규칙 (그대로 이식) |
 |---|---|
-| 셀 그리드 + 충돌 플래그 | `solid`, `objAt`, `occ` (셀 예약) 배열 |
-| `Nav_Update` BFS 거리장 | `updateFlow()`: 플레이어 셀이 바뀌거나 장애물이 바뀔 때만 4방향 BFS |
-| `Nav_Direction` | `updateCreature()`의 think 단계: 거리가 줄어드는 이웃 중 목표 방향과 가장 잘 맞는 셀 선택. 대각선은 양옆 직교 셀이 모두 비어 있어야 허용 |
-| `State_CellToCell` + `mCollide_Creature` 예약 | `c.state = 'move'`, `occ[target]++` → 도착하면 출발 셀 해제 |
-| 데빌 원거리 공격 | `brute`: 사거리 6, 시야선(LOS) 확인 후 화염구 발사 |
-| `GetTicks` 콤보 창 | `comboWindow(m)` (같은 공식, 초 단위로 변환) |
-| 타이머 만료 시 배율 −1 | `update()` 안의 combo decay |
-| `AddToMultipliers` 1회성 보상 | `COMBO_REWARDS` + `setMultiplier()` (보상 지급 후 삭제) |
-| `ApplyUpgrade_Weapon` (원본 수치에서 재계산) | `computeStats()` |
-| 레벨 테이블 | `levelSpec(n)` |
-| `RandomPickup` 룰렛 | `randomPickup()` (같은 가중치 공식) |
-| 5연속 처치마다 드롭, 데빌은 항상 드롭 | `onKill()` |
-| 셰이크, 카메라 추적, 영구 데칼 | `shake`, `cam` lerp, `floorCanvas` 데칼 |
+| 무기 10종 | Pistol 26dmg/8f/사거리 8/무한 · SMG 35/4f/auto/100발 · Shotgun 51/12f/사거리 7/20발 · Barrel 150/10개 · Grenade 150/12f/20개, 손을 뗄 때 투척 · Fake Wall 체력 1000/5개 · Mine 100/10개 · Rocket 250/12f/20발 · Charge Pack 150/10개, 한 번 더 누르면 기폭 · Railgun 100/5f/사거리 10/15발/관통 |
+| 업그레이드 | `MULTIPLIER_REWARDS`에 x3 ~ x125 보상 60개 전체. 업그레이드는 원본 수치에서 매번 다시 계산 (`ApplyUpgrade_Weapon`). RapidFire는 `round(max(rate/4, 2))` |
+| 배율 | `getTicks()` 원본 공식. 타이머가 끝나면 −1. 멀티킬 창은 `getTicks/6`, 5킬마다 상자 드롭 |
+| 레벨 | `buildLevels()`는 원본 InitLists 루프 그대로: 스폰 간격 50f에서 레벨마다 −1, 동시 출현 +5 (최대 60), 속도 `min(1+n/10, 5)`, 데빌 +0.3/+0.25 |
+| 크리처 | 좀비 체력 100/속도 0.02/공격 50, 데빌 체력 1000/속도 0.04/사거리 5/화염구 50/질량 5. 상태 머신은 goto → turn → move(셀 단위) → attack → sleep(10f) |
+| 길찾기 | 정적 지형만 쓰는 4방향 BFS. `Nav_Direction`은 목표 방향 → 현재 방향 → 갈 수 있는 칸 중 거리가 가장 짧은 칸 순서로 고르고, 전체 탐색은 프레임당 5회로 제한 |
+| 피격 | 넉백 `max(dmg/5·2/32, 0.3)/mass`. 매 프레임 ×0.65로 줄고, 0.01 미만이 될 때까지 경직한 뒤 3프레임 sleep |
+| 폭발 | 반경 `2 + max(dmg−100, 0)·0.005`. 반경 비율 ≤0.5면 100%, ≤0.75면 75%, 그 바깥은 50%. 플레이어도 피해를 받음 (`mDamageActive`). Big Bang은 주변 1셀에 추가 폭발 2개, Bigger Bang은 3개. Cluster는 파편탄 4개 |
+| 투사체 | 로켓은 0.5셀/f로 시작해 매 프레임 ×1.1. 수류탄은 z 속도 0.5·power, 중력 0.06, 60f 뒤 폭발. 화염구는 매 프레임 ×1.02 |
+| 설치물 | 플레이어가 서 있는 칸에 놓이고, 플레이어가 그 칸을 떠나야 막힘 판정이 생김. 지뢰는 크리처가 밟으면 2초 뒤 폭발 |
+| 픽업 | `RandomPickup` 가중치 룰렛. 드롭된 상자는 10초 뒤 사라짐 |
+| 플레이어 | 체력 200, 속도 0.16셀/f, 8방향, 30초에 완전 회복, 시작 무적 200f (깜빡임) |
 
-**바꾼 부분**: 이름, 그래픽(전부 코드로 그림), 맵, 사운드(WebAudio로 합성)는 모두 새로 만들었습니다. 무기 해금 임계값과 수치도 이 게임에 맞게 다시 조정했습니다.
-
----
+**원본과 다른 부분**: 그래픽, 맵, 이름, 사운드는 독자 제작입니다. 원본은 애니메이션 프레임 데이터로 공격 타이밍을 정하는데, 이 데이터는 이식하지 않았습니다. 그래서 좀비 공격 스윙 길이(8프레임 가정)와 데빌 화염구 발사 시점은 근사값입니다. 데빌 화염구 속도(`mAttackSpeed`)는 원본에서 값을 찾지 못해 0.15셀/f로 정했습니다.
 
 ## 5. 한계
 - `as2emu.py`는 AVM1 바이트코드를 완전히 디컴파일하지는 못합니다. `for..in`(`enumerate`)은 루프 본문을 복원하지 못하고, 일부 `switch`(`SetDifficulty`)는 분기 내용이 비어 보입니다. 결론은 직접 해제된 코드에서 확인한 부분만 근거로 삼았습니다.

@@ -1,85 +1,84 @@
 'use strict';
-// Game tuning tables.
-// Mechanics mirror what was recovered from the analyzed SWF (see ANALYSIS.md),
-// numbers and names are this project's own.
+// Gameplay tables ported 1:1 from the decompiled SWF (see ANALYSIS.md).
+// Everything is in the original's units: cells and frames @ 50 fps.
+// Visuals, names and map are this project's own.
 
-const FPS_REF = 50; // the analyzed game ran at 50 fps; frame-based formulas are converted with this
+const FPS = 50;
+const INFINITE_AMMO = 999999; // CThing_Weapon.mInfinateAmmo
 
-// ── Weapons ────────────────────────────────────────────────────────────────
-// kind: 'ray' (hitscan bullet), 'spread', 'pierce', 'rocket', 'grenade', 'barrel', 'mine'
+// ── Weapons (CThing_Weapon_* constructors) ────────────────────────────────
+// rate: frames between shots (mFireRate). range: cells. trigger: 'press' | 'auto' | 'release'
 const WEAPONS = {
-  pistol:  { key: 1, name: 'Pistol',   kind: 'ray',     dmg: 26,  rate: 0.16, range: 8,  ammo: Infinity, auto: false, color: '#ffe08a' },
-  smg:     { key: 2, name: 'SMG',      kind: 'ray',     dmg: 30,  rate: 0.08, range: 8,  ammo: 120, auto: true,  color: '#ffd166' },
-  shotgun: { key: 3, name: 'Shotgun',  kind: 'spread',  dmg: 50,  rate: 0.26, range: 7,  ammo: 25,  auto: false, color: '#ffb35c', wide: 0 },
-  barrel:  { key: 4, name: 'Barrel',   kind: 'barrel',  dmg: 150, rate: 0.25, range: 1,  ammo: 8,   auto: false, radius: 2.2 },
-  grenade: { key: 5, name: 'Grenade',  kind: 'grenade', dmg: 150, rate: 0.35, range: 6,  ammo: 15,  auto: false, radius: 2.2 },
-  mine:    { key: 6, name: 'Mine',     kind: 'mine',    dmg: 130, rate: 0.3,  range: 0,  ammo: 10,  auto: false, radius: 2.0 },
-  rocket:  { key: 7, name: 'Rocket',   kind: 'rocket',  dmg: 250, rate: 0.5,  range: 16, ammo: 12,  auto: false, radius: 2.5 },
-  railgun: { key: 8, name: 'Railgun',  kind: 'pierce',  dmg: 120, rate: 0.6,  range: 14, ammo: 15,  auto: false, color: '#8fd3ff' },
+  pistol:     { key: '1', name: 'Pistol',      kind: 'bullet',    dmg: 26,  rate: 8,  range: 8,  ammo: INFINITE_AMMO, trigger: 'press' },
+  smg:        { key: '2', name: 'SMG',         kind: 'bullet',    dmg: 35,  rate: 4,  range: 8,  ammo: 100, trigger: 'auto' },
+  shotgun:    { key: '3', name: 'Shotgun',     kind: 'shotgun',   dmg: 51,  rate: 12, range: 7,  ammo: 20,  trigger: 'press', wide: 0 },
+  barrel:     { key: '4', name: 'Barrel',      kind: 'barrel',    dmg: 150, rate: 1,  range: 0,  ammo: 10,  trigger: 'press' },
+  grenade:    { key: '5', name: 'Grenade',     kind: 'grenade',   dmg: 150, rate: 12, range: 6,  ammo: 20,  trigger: 'release' },
+  fakewall:   { key: '6', name: 'Fake Wall',   kind: 'wall',      dmg: 100, rate: 1,  range: 0,  ammo: 5,   trigger: 'press' },
+  mine:       { key: '7', name: 'Mine',        kind: 'mine',      dmg: 100, rate: 1,  range: 0,  ammo: 10,  trigger: 'press' },
+  rocket:     { key: '8', name: 'Rocket',      kind: 'rocket',    dmg: 250, rate: 12, range: 0,  ammo: 20,  trigger: 'press' },
+  chargepack: { key: '9', name: 'Charge Pack', kind: 'chargepack',dmg: 150, rate: 1,  range: 0,  ammo: 10,  trigger: 'press' },
+  railgun:    { key: '0', name: 'Railgun',     kind: 'railgun',   dmg: 100, rate: 5,  range: 10, ammo: 15,  trigger: 'press' },
 };
-const WEAPON_ORDER = ['pistol', 'smg', 'shotgun', 'barrel', 'grenade', 'mine', 'rocket', 'railgun'];
+const WEAPON_ORDER = ['pistol', 'smg', 'shotgun', 'barrel', 'grenade', 'fakewall', 'mine', 'rocket', 'chargepack', 'railgun'];
 
-// ── Combo-threshold unlocks ────────────────────────────────────────────────
-// Reaching combo multiplier N fires every entry at N once per run.
-// type 'unlock' gives a weapon; any other type is a weapon upgrade flag.
-const COMBO_REWARDS = [
-  [3,   'pistol',  'auto',        'Pistol+: Hair trigger'],
-  [5,   'smg',     'unlock',      'NEW WEAPON: SMG  [2]'],
-  [8,   'pistol',  'doubleDmg',   'Pistol+: Double damage'],
-  [10,  'shotgun', 'unlock',      'NEW WEAPON: Shotgun  [3]'],
-  [12,  'smg',     'doubleAmmo',  'SMG+: Double ammo'],
-  [15,  'barrel',  'unlock',      'NEW WEAPON: Barrel  [4]'],
-  [17,  'shotgun', 'fastFire',    'Shotgun+: Fast pump'],
-  [20,  'smg',     'longShot',    'SMG+: Long range'],
-  [22,  'grenade', 'unlock',      'NEW WEAPON: Grenade  [5]'],
-  [25,  'shotgun', 'wide',        'Shotgun+: Wide spread'],
-  [28,  'barrel',  'bigBang',     'Barrel+: Big bang'],
-  [30,  'mine',    'unlock',      'NEW WEAPON: Mine  [6]'],
-  [33,  'grenade', 'doubleAmmo',  'Grenade+: Double ammo'],
-  [35,  'smg',     'doubleDmg',   'SMG+: Double damage'],
-  [38,  'shotgun', 'doubleAmmo',  'Shotgun+: Double ammo'],
-  [40,  'rocket',  'unlock',      'NEW WEAPON: Rocket  [7]'],
-  [43,  'mine',    'bigBang',     'Mine+: Big bang'],
-  [45,  'grenade', 'bigBang',     'Grenade+: Big bang'],
-  [48,  'shotgun', 'wider',       'Shotgun+: Wider spread'],
-  [50,  'rocket',  'doubleAmmo',  'Rocket+: Double ammo'],
-  [55,  'railgun', 'unlock',      'NEW WEAPON: Railgun  [8]'],
-  [60,  'rocket',  'fastFire',    'Rocket+: Fast reload'],
-  [65,  'smg',     'quadDmg',     'SMG+: Quad damage'],
-  [70,  'railgun', 'doubleAmmo',  'Railgun+: Double ammo'],
-  [80,  'rocket',  'bigBang',     'Rocket+: Big bang'],
-  [90,  'railgun', 'fastFire',    'Railgun+: Rapid fire'],
-  [100, 'smg',     'infinite',    'SMG+: Infinite ammo'],
+// ── Multiplier rewards (CUpgrades.InitLists → AddToMultipliers), complete table ──
+// [multiplier, classID, prop]. classID: weapon id, 'obj_barrel' / 'obj_mine' / 'obj_chargepack', or 'player' (NW_ = new weapon)
+const MULTIPLIER_REWARDS = [
+  [3, 'pistol', 'FastFire'], [5, 'player', 'NW_smg'], [8, 'pistol', 'DoubleDamage'], [10, 'player', 'NW_shotgun'],
+  [13, 'smg', 'RapidFire'], [15, 'player', 'NW_barrel'], [17, 'smg', 'DoubleAmmo'], [18, 'shotgun', 'FastFire'],
+  [20, 'player', 'NW_grenade'], [21, 'shotgun', 'DoubleAmmo'], [23, 'smg', 'LongShot'], [26, 'barrel', 'DoubleAmmo'],
+  [30, 'player', 'NW_fakewall'], [31, 'shotgun', 'WideShot'], [32, 'obj_barrel', 'BigBang'], [33, 'grenade', 'ClusterExplode'],
+  [35, 'shotgun', 'LongShot'], [36, 'barrel', 'QuadAmmo'], [37, 'fakewall', 'DoubleAmmo'], [39, 'smg', 'QuadAmmo'],
+  [40, 'player', 'NW_mine'], [41, 'shotgun', 'QuadAmmo'], [42, 'grenade', 'DoubleAmmo'], [43, 'shotgun', 'RapidFire'],
+  [44, 'obj_barrel', 'BiggerBang'], [45, 'grenade', 'BigBang'], [47, 'obj_mine', 'ClusterExplode'], [48, 'smg', 'DoubleDamage'],
+  [50, 'player', 'NW_rocket'], [51, 'shotgun', 'WiderShot'], [52, 'grenade', 'QuadAmmo'], [53, 'fakewall', 'QuadAmmo'],
+  [54, 'mine', 'DoubleAmmo'], [55, 'player', 'NW_chargepack'], [56, 'shotgun', 'DoubleDamage'], [57, 'grenade', 'BiggerBang'],
+  [58, 'obj_mine', 'BigBang'], [59, 'rocket', 'FastFire'], [61, 'smg', 'InfinateRange'], [62, 'obj_mine', 'BiggerBang'],
+  [63, 'obj_chargepack', 'ClusterExplode'], [64, 'mine', 'QuadAmmo'], [66, 'rocket', 'DoubleAmmo'], [68, 'chargepack', 'DoubleAmmo'],
+  [70, 'player', 'NW_railgun'], [72, 'rocket', 'BigBang'], [74, 'obj_chargepack', 'BigBang'], [76, 'chargepack', 'QuadAmmo'],
+  [78, 'railgun', 'FastFire'], [80, 'railgun', 'DoubleAmmo'], [85, 'rocket', 'QuadAmmo'], [90, 'smg', 'QuadDamage'],
+  [95, 'obj_chargepack', 'BiggerBang'], [100, 'railgun', 'RapidFire'], [105, 'rocket', 'BiggerBang'], [110, 'railgun', 'QuadAmmo'],
+  [120, 'rocket', 'RapidFire'], [125, 'railgun', 'LongShot'],
 ];
+const UPGRADE_LABEL = {
+  FastFire: 'Fast Fire', RapidFire: 'Rapid Fire', DoubleDamage: 'Double Damage', QuadDamage: 'Quad Damage',
+  DoubleAmmo: 'Double Ammo', QuadAmmo: 'Quad Ammo', LongShot: 'Long Shot', InfinateRange: 'Infinite Range',
+  WideShot: 'Wide Shot', WiderShot: 'Wider Shot', BigBang: 'Big Bang', BiggerBang: 'Bigger Bang', ClusterExplode: 'Cluster Explode',
+};
+const OBJ_NAME = { obj_barrel: 'Barrel', obj_mine: 'Mine', obj_chargepack: 'Charge Pack' };
 
-// ── Enemies ────────────────────────────────────────────────────────────────
-const ENEMIES = {
-  walker: { hp: 100, speed: 1.4, dmg: 25, score: 100,  radius: 0.4,  attackTime: 0.45, attackCD: 0.7, color: '#7fae5a' },
-  brute:  { hp: 800, speed: 1.9, dmg: 45, score: 1000, radius: 0.55, attackTime: 0.5,  attackCD: 1.0, color: '#b0413e',
-            fireRange: 6, fireCD: 2.4, fireDmg: 35 },
+// ── Creatures (Process_Init) ──────────────────────────────────────────────
+const CREATURES = {
+  player: { life: 200, speed: 0.16, mass: 2, radius: 0.45 },
+  zombie: { life: 100, speed: 0.02, mass: 1, radius: 0.45, damage: 50, score: 100 },
+  devil:  { life: 1000, speed: 0.04, mass: 5, radius: 0.42, damage: 50, score: 1000, attackRange: 5, fireRate: 0, fireRateStart: 5 },
 };
 
-// ── Waves (ported from the level table generator) ──────────────────────────
-// Level n: concurrent cap = min(10+5(n-1), 60), total = 10+5(n-1),
-// spawn interval shrinks, speed multiplier = min(1 + n/10, cap),
-// brutes: concurrent += 0.3/level, total += 0.25/level after level 1.
-function levelSpec(n) {
-  const k = n - 1;
-  return {
-    walkerCap: Math.min(10 + 5 * k, 60),
-    walkerTotal: 10 + 5 * k,
-    walkerEvery: Math.max(1.0 - 0.05 * k, 0.15),
-    bruteCap: n === 1 ? 0 : Math.floor(Math.min(0.3 * k, 5)),
-    bruteTotal: n === 1 ? 0 : Math.floor(0.25 * k),
-    bruteEvery: Math.max(10 - 0.5 * k, 2),
-    speedMul: Math.min(1 + n / 10, 2.5),
-  };
+// ── Level table generator (CUpgrades.InitLists), ported loop ──────────────
+function buildLevels() {
+  const L = [];
+  let r8 = 1 * FPS, r4 = 10, r5 = 10, r6 = 10 * FPS, r7 = 0, r9 = 0;
+  for (let n = 1; n <= 100; n++) {
+    const lv = {
+      Zombie_SpawnRate: Math.floor(r8), Zombie_Count: Math.floor(r4), Zombie_TotalCount: Math.floor(r5),
+      ZombieSpeedUp: Math.min(1 + n / 100 * 10, 5),
+      Devil_SpawnRate: Math.floor(r6), Devil_Count: r7, Devil_TotalCount: r9,
+      DevilSpeedUp: Math.min(1 + n / 100 * 10, 5),
+    };
+    L[n] = lv;
+    r8 = Math.max(r8 - 1, 1); r4 = Math.min(r4 + 5, 60); r5 = r5 + 5;
+    r7 = Math.min(r7 + 0.3, 5); r9 = r9 + 0.25; r6 = Math.max(r6 - 1, FPS);
+  }
+  return L;
 }
 
-// Combo window, ported from GetTicks():
-//   ticks = (((101 - m) ^ 2.5) / 1e5) * (FPS*3 - 3) + 3     (frames @ 50fps)
-function comboWindow(m) {
-  m = Math.min(m, 100);
-  const p = Math.pow(101 - m, 2.5) / 1e5;
-  return (p * (FPS_REF * 3 - 3) + 3) / FPS_REF; // seconds
+// CUpgrades.GetTicks: multiplier window in frames
+function getTicks(index) {
+  if (index > 100) index = 100;
+  index = 100 - (index - 1);
+  return Math.pow(index, 2.5) / 100000 * (FPS * 3 - 3) + 3;
 }
+
+// CThing_Effect_Explosion: radius from damage
+const explosionRange = dmg => 2 + Math.max(dmg - 100, 0) * 0.005;

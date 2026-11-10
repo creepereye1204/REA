@@ -64,6 +64,7 @@ def cbin(op, a, b):
     raise ValueError
 
 CONSTFN = {}
+STACKKEY = True
 class Fn:
     count = 0
 
@@ -111,7 +112,7 @@ class Decomp:
                 if steps > 400000: out.append((None, '// step limit')); return out, labels
                 if pc == end or not (0 <= pc < len(s.d)):
                     out.append((None, 'return;')); break
-                key = (pc, tuple(sorted((k, repr(v)) for k, v in ov.items())))
+                key = (pc, tuple(sorted((k, repr(v)) for k, v in ov.items())), tuple(repr(x) for x in st[-3:]) if STACKKEY else ())
                 if key in visited:
                     labels.add(visited[key]); out.append((None, 'goto L%d;' % visited[key])); break
                 nid[0] += 1; visited[key] = nid[0]; out.append((nid[0], None))
