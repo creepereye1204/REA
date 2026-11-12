@@ -18,6 +18,14 @@ function loadPeerJS() {
     document.head.appendChild(s);
   });
 }
+// On the self-hosted copy (boxhunter.p-e.kr) signaling goes through our own PeerJS server;
+// elsewhere (GitHub Pages) it falls back to the public PeerJS cloud. Room codes only work
+// between players on the same site.
+function peerOpts() {
+  const h = (typeof location !== 'undefined' && location.hostname) || '';
+  if (/(^|\.)boxhunter\.p-e\.kr$/.test(h)) return { debug: 0, host: 'api.boxhunter.p-e.kr', port: 443, secure: true, path: '/' };
+  return { debug: 0 };
+}
 function makeCode() { const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let s = ''; for (let k = 0; k < 5; k++) s += A[(Math.random() * A.length) | 0]; return s; }
 function netSend(o) { if (NET.conn && NET.conn.open) { try { NET.conn.send(o); } catch (e) { /* closed */ } } }
 function sendCmd(c) { if (NET.role === 'client') netSend({ k: 'cmd', c }); else if (G) doCmd(V.me, c); }
@@ -27,7 +35,7 @@ async function hostOpen() {
   await loadPeerJS();
   NET.code = makeCode();
   return new Promise((res, rej) => {
-    const peer = new Peer(PEER_PREFIX + NET.code, { debug: 0 });
+    const peer = new Peer(PEER_PREFIX + NET.code, peerOpts());
     NET.peer = peer;
     peer.on('open', () => { V.net = `방 코드: ${NET.code} — 친구를 기다리는 중`; res(); });
     peer.on('error', e => { if (e.type === 'unavailable-id') { NET.code = makeCode(); } V.net = '네트워크 오류: ' + e.type; rej(e); });
@@ -97,7 +105,7 @@ async function joinRoom(code) {
   await loadPeerJS();
   NET.code = code.toUpperCase().trim();
   return new Promise((res, rej) => {
-    const peer = new Peer({ debug: 0 });
+    const peer = new Peer(peerOpts());
     NET.peer = peer;
     const to = setTimeout(() => rej(new Error('연결 시간 초과 — 코드를 확인하세요')), 15000);
     peer.on('open', () => {

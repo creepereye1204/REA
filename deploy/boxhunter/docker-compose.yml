@@ -1,0 +1,26 @@
+# Self-hosted copy of Cell Siege: Nightfall on the shared home server (boxhunter.p-e.kr).
+# Rules: /home/smalllab/Docker/Proxy/DEPLOYMENT-HANDOFF.md
+# - No host ports. HAProxy joins the boxhunter_default network and reaches the containers by name.
+# - web mounts ./site, so deploy.sh updates the game without recreating the container
+#   (no HAProxy restart needed, R21). Recreating a container DOES need one.
+name: boxhunter
+
+services:
+  # www.boxhunter.p-e.kr -> static game
+  web:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    volumes:
+      - ./site:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # api.boxhunter.p-e.kr -> PeerJS signaling server (WebRTC handshake only; gameplay stays P2P)
+  api:
+    image: peerjs/peerjs-server:1.0.2
+    restart: unless-stopped
+    command: ["--port", "9000", "--path", "/", "--proxied", "true", "--allow_discovery", "false"]
