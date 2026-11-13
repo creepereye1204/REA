@@ -30,12 +30,152 @@ function valueNoise(R, cells) {
   };
 }
 
+const CAMP_NAMES = ['붉은 약탈단 캠프', '해골 약탈단 캠프', '까마귀 약탈단 캠프', '들개 약탈단 캠프'];
+const CAMP_BOSSES = ['도끼 장', '백골', '까마귀', '들개 왕'];
+
+// ── Landmarks: each is a fenced lot with a themed building, loot, guards and story hooks ──
+const LANDMARKS = [
+  { key: 'hospital', name: '종합병원',            w: 32, h: 24 },
+  { key: 'lab',      name: '한빛 생명공학 연구소', w: 28, h: 22 },
+  { key: 'military', name: '잔존군 검문소',        w: 28, h: 22 },
+  { key: 'tower',    name: '송신탑',              w: 16, h: 16 },
+  { key: 'church',   name: '붉은 새벽 교회',       w: 24, h: 22 },
+  { key: 'prison',   name: '교도소',              w: 34, h: 28 },
+  { key: 'station',  name: '고속도로 주유소',      w: 20, h: 16 },
+  { key: 'farm',     name: '햇살 농장',            w: 30, h: 24 },
+  { key: 'school',   name: '초등학교',            w: 24, h: 20 },
+  { key: 'helipad',  name: '옥상 헬기장',          w: 20, h: 20 },
+];
+function placeLandmarks(R, h) {
+  const { set, get, reserve, areaFree, addCont, buildHouse, cx, cy } = h;
+  const fill = (x, y, w, hh, t) => { for (let j = y; j < y + hh; j++) for (let i = x; i < x + w; i++) set(i, j, t); };
+  const fence = (x, y, w, hh, gaps) => {
+    for (let i = x; i < x + w; i++) { set(i, y, T.FENCE); set(i, y + hh - 1, T.FENCE); }
+    for (let j = y; j < y + hh; j++) { set(x, j, T.FENCE); set(x + w - 1, j, T.FENCE); }
+    for (const [gx, gy] of gaps) set(gx, gy, T.CONCRETE);
+  };
+  const spawn = (kind, x, y, o = {}) => W.npcSpawns.push({ kind, x: x + 0.5, y: y + 0.5, poi: o.poi, ...o });
+  const far = [['lab', 70], ['prison', 60], ['helipad', 70], ['military', 55], ['hospital', 45], ['church', 50]];
+  for (const L of LANDMARKS) {
+    const minD = (far.find(f => f[0] === L.key) || [0, 38])[1];
+    let placed = false;
+    for (let tries = 0; tries < 900 && !placed; tries++) {
+      const x = 4 + R.i(MW - L.w - 8), y = 4 + R.i(MH - L.h - 8);
+      if (dist(x + L.w / 2, y + L.h / 2, cx, cy) < minD) continue;
+      if (W.pois.some(p => dist(p.x + p.w / 2, p.y + p.h / 2, x + L.w / 2, y + L.h / 2) < 34)) continue;
+      if (!areaFree(x, y, L.w, L.h, true)) continue;
+      const P = { id: W.pois.length, key: L.key, name: L.name, x, y, w: L.w, h: L.h };
+      buildLandmark(P);
+      W.pois.push(P);
+      reserve(x, y, L.w, L.h, 2);
+      placed = true;
+    }
+  }
+  function gateGaps(P) { const mx = P.x + (P.w >> 1), my = P.y + (P.h >> 1); return [[mx - 1, P.y + P.h - 1], [mx, P.y + P.h - 1], [mx + 1, P.y + P.h - 1], [P.x, my], [P.x, my + 1]]; }
+  function buildLandmark(P) {
+    const { x, y, w, h: hh } = P, mx = x + (w >> 1), my = y + (hh >> 1);
+    const trig = (kind, tx, ty) => W.triggers.push({ id: W.triggers.length, kind, poi: P.key, x: tx + 0.5, y: ty + 0.5 });
+    switch (P.key) {
+      case 'hospital': {
+        fill(x, y, w, hh, T.CONCRETE); fence(x, y, w, hh, gateGaps(P));
+        buildHouse(x + 3, y + 3, w - 6, hh - 8, 'hospital', 'S');
+        spawn('broodmother', mx, my - 2, { tag: 'broodmother' });
+        for (let k = 0; k < 5; k++) spawn(R.pick(['crawler', 'toxic', 'walker']), x + 5 + R.i(w - 10), y + 5 + R.i(hh - 12));
+        P.ambulance = addCont('car', x + 4, y + hh - 4, -1, [idx(x + 4, y + hh - 4), idx(x + 5, y + hh - 4)]);
+        if (P.ambulance) { P.ambulance.color = '#e8e8e8'; P.ambulance.horiz = true; P.ambulance.x += 0.5; }
+        break;
+      }
+      case 'lab': {
+        fill(x, y, w, hh, T.CONCRETE); fence(x, y, w, hh, gateGaps(P));
+        const b = buildHouse(x + 4, y + 3, w - 8, hh - 8, 'lab', 'S');
+        W.gates.push(...b.doors.map(([dx, dy]) => idx(dx, dy)));
+        spawn('x13', mx, my - 2, { tag: 'x13' });
+        for (let k = 0; k < 4; k++) spawn('stalker', x + 6 + R.i(w - 12), y + 5 + R.i(hh - 12));
+        spawn('dr_han', x + 6, y + 5, { tag: 'dr_han', mode: 'wait' });
+        trig('lab_gate', b.doors[0][0], b.doors[0][1] + 1);
+        break;
+      }
+      case 'military': {
+        fill(x, y, w, hh, T.CONCRETE); fence(x, y, w, hh, gateGaps(P));
+        buildHouse(x + 3, y + 3, 12, 8, 'barracks', 'S');
+        buildHouse(x + w - 13, y + 3, 10, 8, 'barracks', 'S');
+        for (let i = x + 3; i < x + w - 3; i += 3) set(i, y + hh - 5, T.FENCE); // sandbag line
+        addCont('milcrate', x + 4, y + hh - 3, -1); addCont('milcrate', x + w - 5, y + hh - 3, -1);
+        spawn('yoon', mx, my + 2, { tag: 'yoon', home: { x: mx + 0.5, y: my + 2.5 } });
+        for (let k = 0; k < 4; k++) spawn('soldier', x + 4 + R.i(w - 8), my + 1 + R.i(4), { home: { x: mx, y: my } });
+        for (let k = 0; k < 2; k++) spawn('soldier_heavy', mx - 3 + k * 6, y + hh - 4);
+        break;
+      }
+      case 'tower': {
+        fill(x, y, w, hh, T.CONCRETE); fence(x, y, w, hh, gateGaps(P));
+        buildHouse(x + 2, y + 2, 7, 5, 'tower', 'S');
+        set(mx + 2, my + 2, T.ROCK); P.mast = { x: mx + 2.5, y: my + 2.5 };
+        trig('tower', mx + 1, my + 3);
+        for (let k = 0; k < 3; k++) spawn('walker', x + 3 + R.i(w - 6), y + 8 + R.i(5));
+        break;
+      }
+      case 'church': {
+        fill(x, y, w, hh, T.DIRT);
+        fence(x, y, w, hh, gateGaps(P));
+        buildHouse(x + 6, y + 2, 12, 11, 'church', 'S');
+        for (let j = y + 15; j < y + hh - 2; j += 2) for (let i = x + 2; i < x + w - 2; i += 3) if (R.chance(0.7) && Math.abs(i - mx) > 1) set(i, j, T.GRAVE);
+        spawn('cult_priest', mx, y + 6, { tag: 'priest' });
+        for (let k = 0; k < 4; k++) spawn('cultist', x + 3 + R.i(w - 6), y + 14 + R.i(4));
+        for (let k = 0; k < 2; k++) spawn('zealot', x + 8 + R.i(8), y + 9);
+        spawn('lost', x + 8, y + 4, { tag: 'mechanic', mode: 'wait', title: '정비공 백도윤' });
+        break;
+      }
+      case 'prison': {
+        fill(x, y, w, hh, T.CONCRETE); fence(x, y, w, hh, gateGaps(P));
+        fence(x + 2, y + 2, w - 4, hh - 4, [[mx - 1, y + hh - 3], [mx, y + hh - 3], [mx + 1, y + hh - 3]]);
+        buildHouse(x + 6, y + 5, w - 12, 13, 'cellblock', 'S');
+        spawn('goliath', mx, y + hh - 7, { tag: 'goliath' });
+        for (let k = 0; k < 4; k++) spawn('riot', x + 6 + R.i(w - 12), y + 8 + R.i(6));
+        for (let k = 0; k < 4; k++) spawn('hound', x + 5 + R.i(w - 10), y + hh - 6);
+        break;
+      }
+      case 'station': {
+        fill(x, y, w, hh, T.CONCRETE);
+        buildHouse(x + 2, y + 2, 8, 6, 'station', 'S');
+        for (let k = 0; k < 4; k++) { const px = x + 4 + (k % 2) * 8, py = y + 10 + (k >> 1) * 3; const c = addCont('pump', px, py, -1); if (c) c.respawn = 1; }
+        P.canopy = { x: x + 2, y: y + 9, w: 15, h: 6 };
+        for (let k = 0; k < 4; k++) spawn(R.pick(['walker', 'walker', 'runner', 'toxic']), x + 2 + R.i(w - 4), y + 9 + R.i(5));
+        break;
+      }
+      case 'farm': {
+        fill(x, y, w, hh, T.DIRT); fence(x, y, w, hh, gateGaps(P));
+        buildHouse(x + 2, y + 2, 9, 7, 'farmhouse', 'S');
+        buildHouse(x + w - 11, y + 2, 9, 7, 'warehouse', 'S');
+        for (let j = y + 11; j < y + hh - 2; j++) for (let i = x + 2; i < x + w - 2; i++) if ((i - x) % 4 !== 0 && Math.abs(i - mx) > 1) set(i, j, T.CROP);
+        trig('farm_pump', mx, y + 9);
+        for (let k = 0; k < 4; k++) spawn('hound', x + 4 + R.i(w - 8), y + 12 + R.i(6));
+        break;
+      }
+      case 'school': {
+        fill(x, y, w, hh, T.DIRT); fence(x, y, w, hh, gateGaps(P));
+        buildHouse(x + 2, y + 2, w - 4, 10, 'school', 'S');
+        spawn('lost', x + 5, y + 5, { tag: 'child', mode: 'wait', title: '박민호' });
+        for (let k = 0; k < 6; k++) spawn(R.pick(['walker', 'crawler', 'runner']), x + 3 + R.i(w - 6), y + 13 + R.i(4));
+        break;
+      }
+      case 'helipad': {
+        fill(x, y, w, hh, T.CONCRETE); fence(x, y, w, hh, gateGaps(P));
+        fill(mx - 3, my - 3, 7, 7, T.PAD);
+        addCont('milcrate', x + 3, y + 3, -1); addCont('milcrate', x + w - 4, y + 3, -1);
+        trig('flare', mx, my + 4);
+        break;
+      }
+    }
+  }
+}
+
 function genWorld(seed) {
   const R = rng(seed);
   Object.assign(W, {
     seed, tile: new Uint8Array(MW * MH), mb: new Uint8Array(MW * MH), structAt: new Array(MW * MH).fill(null),
     contAt: new Array(MW * MH).fill(null), conts: [], buildings: [], villages: [], camps: [], spawnsEdge: [[], [], [], []],
     npcSpawns: [], survivorSpots: [], reserved: new Uint8Array(MW * MH), floorStyle: new Uint8Array(MW * MH), bldAt: new Int16Array(MW * MH).fill(-1),
+    pois: [], triggers: [], gates: [],
   });
   const tile = W.tile, res = W.reserved;
   const set = (x, y, t) => { if (inMap(x, y)) tile[idx(x, y)] = t; };
@@ -61,9 +201,12 @@ function genWorld(seed) {
   const roadH = (y, x0, x1) => { for (let x = x0; x <= x1; x++) for (let k = -1; k <= 1; k++) set(x, y + k, T.ROAD); };
   const roadV = (x, y0, y1) => { for (let y = y0; y <= y1; y++) for (let k = -1; k <= 1; k++) set(x + k, y, T.ROAD); };
   roadH(cy, 0, MW - 1); roadV(cx, 0, MH - 1);
-  const ry1 = 22 + R.i(8), ry2 = MH - 24 - R.i(8), rx1 = 26 + R.i(8), rx2 = MW - 28 - R.i(8);
+  const ry1 = 26 + R.i(8), ry2 = MH - 28 - R.i(8), rx1 = 30 + R.i(8), rx2 = MW - 32 - R.i(8);
   roadH(ry1, rx1, rx2); roadH(ry2, rx1, rx2); roadV(rx1, ry1, ry2); roadV(rx2, ry1, ry2);
-  W.roads = { ry1, ry2, rx1, rx2 };
+  // inner ring around the town centre
+  const iy1 = cy - 26, iy2 = cy + 26, ix1 = cx - 34, ix2 = cx + 34;
+  roadH(iy1, ix1, ix2); roadH(iy2, ix1, ix2); roadV(ix1, iy1, iy2); roadV(ix2, iy1, iy2);
+  W.roads = { ry1, ry2, rx1, rx2, iy1, iy2, ix1, ix2 };
   for (let y = 0; y < MH; y++) for (let x = 0; x < MW; x++) {
     const t = tile[idx(x, y)];
     if (t === T.ROAD) continue;
@@ -73,7 +216,7 @@ function genWorld(seed) {
   reserve(W.base.x, W.base.y, W.base.w, W.base.h, 4);
 
   // lakes
-  for (let k = 0; k < 5; k++) {
+  for (let k = 0; k < 7; k++) {
     for (let tries = 0; tries < 60; tries++) {
       const lx = 10 + R.i(MW - 20), ly = 10 + R.i(MH - 20), lr = 3 + R.f() * 4;
       if (dist(lx, ly, cx, cy) < 30) continue;
@@ -90,13 +233,13 @@ function genWorld(seed) {
   }
 
   // villages (fenced, friendly — trade or steal)
-  const VNAMES = ['솔빛 마을', '은행나무 마을', '바람골 마을'];
+  const VNAMES = ['솔빛 마을', '은행나무 마을', '바람골 마을', '소금밭 마을'];
   const placeVillage = (vi) => {
     const vw = 24, vh = 20;
     for (let tries = 0; tries < 400; tries++) {
       const x = 4 + R.i(MW - vw - 8), y = 4 + R.i(MH - vh - 8);
       if (dist(x + vw / 2, y + vh / 2, cx, cy) < 36) continue;
-      if (W.villages.some(v => dist(v.x, v.y, x, y) < 45)) continue;
+      if (W.villages.some(v => dist(v.x, v.y, x, y) < 60)) continue;
       if (!areaFree(x, y, vw, vh, false)) continue;
       const v = { id: vi, name: VNAMES[vi], x, y, w: vw, h: vh, hostile: 0 };
       for (let j = y; j < y + vh; j++) for (let i = x; i < x + vw; i++) set(i, j, T.VFLOOR);
@@ -115,6 +258,7 @@ function genWorld(seed) {
       W.npcSpawns.push({ kind: 'trader', x: gx + 0.5, y: gy + 0.5, village: vi, home: v.stall });
       for (let k = 0; k < 3; k++) W.npcSpawns.push({ kind: 'guard', x: gx + 0.5 + (k - 1) * 4, y: gy + 3.5, village: vi });
       for (let k = 0; k < 4; k++) W.npcSpawns.push({ kind: 'villager', x: x + 4 + R.i(vw - 8) + 0.5, y: gy + R.i(3) - 1 + 0.5, village: vi });
+      W.npcSpawns.push({ kind: 'elder', x: gx + 0.5, y: gy - 2.5, village: vi, tag: 'elder' + vi, home: { x: gx + 0.5, y: gy - 2.5 } });
       reserve(x, y, vw, vh, 2);
       W.villages.push(v);
       return;
@@ -128,7 +272,8 @@ function genWorld(seed) {
       const x = 4 + R.i(MW - w - 8), y = 4 + R.i(MH - h - 8);
       if (dist(x + w / 2, y + h / 2, cx, cy) < 32) continue;
       if (!areaFree(x, y, w, h, false)) continue;
-      const c = { id: ci, name: ['붉은 약탈단 캠프', '해골 약탈단 캠프', '까마귀 약탈단 캠프'][ci], x, y, w, h };
+      if (W.camps.some(o => dist(o.x, o.y, x, y) < 40)) continue;
+      const c = { id: ci, name: CAMP_NAMES[ci], boss: CAMP_BOSSES[ci], x, y, w, h };
       for (let j = y; j < y + h; j++) for (let i = x; i < x + w; i++) set(i, j, T.CAMPDIRT);
       for (let i = x; i < x + w; i++) { if (R.chance(0.7)) set(i, y, T.FENCE); if (R.chance(0.7)) set(i, y + h - 1, T.FENCE); }
       for (let j = y; j < y + h; j++) { if (R.chance(0.7)) set(x, j, T.FENCE); if (R.chance(0.7)) set(x + w - 1, j, T.FENCE); }
@@ -138,7 +283,7 @@ function genWorld(seed) {
       addCont('crate', mx, my + 3, -1); addCont('ammobox', x + w - 5, y + h - 3, -1);
       const kinds = ['bandit_thug', 'bandit_gunner', 'bandit_smg', 'bandit_shotgun', 'bandit_sniper'];
       for (let k = 0; k < 5; k++) W.npcSpawns.push({ kind: kinds[k], x: mx + R.r(-4, 4), y: my + R.r(-3, 3), camp: ci });
-      W.npcSpawns.push({ kind: ci === 0 ? 'bandit_boss' : 'bandit_smg', x: mx + 0.5, y: my + 1.5, camp: ci });
+      W.npcSpawns.push({ kind: 'bandit_boss', x: mx + 0.5, y: my + 1.5, camp: ci, tag: 'camp' + ci, title: CAMP_BOSSES[ci] });
       c.fire = { x: mx + 0.5, y: my - 1.5 };
       reserve(x, y, w, h, 2);
       W.camps.push(c);
@@ -209,16 +354,17 @@ function genWorld(seed) {
     return b;
   }
 
-  for (let k = 0; k < 3; k++) placeVillage(k);
-  for (let k = 0; k < 3; k++) placeCamp(k);
+  for (let k = 0; k < 4; k++) placeVillage(k);
+  for (let k = 0; k < 4; k++) placeCamp(k);
+  placeLandmarks(R, { set, get, reserve, areaFree, addCont, buildHouse, cx, cy });
 
   // town: buildings along the roads; the NE-ish block is denser
-  const typeBag = ['house', 'house', 'house', 'house', 'store', 'store', 'garage', 'warehouse', 'clinic', 'police'];
+  const typeBag = ['house', 'house', 'house', 'house', 'store', 'store', 'garage', 'warehouse', 'clinic', 'police', 'office'];
   let built = 0;
-  for (let tries = 0; tries < 6000 && built < 95; tries++) {
+  for (let tries = 0; tries < 12000 && built < 150; tries++) {
     const horiz = R.chance(0.5);
     let rx, ry;
-    if (horiz) { ry = R.pick([cy, ry1, ry2]); rx = 3 + R.i(MW - 6); } else { rx = R.pick([cx, rx1, rx2]); ry = 3 + R.i(MH - 6); }
+    if (horiz) { ry = R.pick([cy, ry1, ry2, iy1, iy2]); rx = 3 + R.i(MW - 6); } else { rx = R.pick([cx, rx1, rx2, ix1, ix2]); ry = 3 + R.i(MH - 6); }
     if (tile[idx(rx, ry)] !== T.ROAD) continue;
     const type = R.pick(typeBag), big = type === 'warehouse' || type === 'store' || type === 'police';
     const w = big ? 10 + R.i(4) : 7 + R.i(3), h = big ? 8 + R.i(3) : 6 + R.i(2);
@@ -246,7 +392,7 @@ function genWorld(seed) {
   }
 
   // cars on roads (2 cells, lootable)
-  for (let k = 0, tries = 0; k < 45 && tries < 4000; tries++) {
+  for (let k = 0, tries = 0; k < 70 && tries < 6000; tries++) {
     const x = 2 + R.i(MW - 4), y = 2 + R.i(MH - 4);
     if (tile[idx(x, y)] !== T.ROAD || res[idx(x, y)]) continue;
     const hz = tile[idx(x - 2, y)] === T.ROAD && tile[idx(x + 2, y)] === T.ROAD && get(x, y - 2) !== T.ROAD;
@@ -268,7 +414,7 @@ function genWorld(seed) {
     else if (R.chance(0.004)) set(x, y, T.ROCK);
   }
   // crates of supplies lying around outside
-  for (let k = 0, tries = 0; k < 30 && tries < 2000; tries++) {
+  for (let k = 0, tries = 0; k < 45 && tries < 3000; tries++) {
     const x = 3 + R.i(MW - 6), y = 3 + R.i(MH - 6), t = get(x, y);
     if ((t !== T.GRASS && t !== T.DIRT) || res[idx(x, y)] || dist(x, y, cx, cy) < 20) continue;
     if (addCont(R.chance(0.3) ? 'ammobox' : 'crate', x, y, -1)) k++;
@@ -351,7 +497,7 @@ function rayCells(x, y, dx, dy, maxD, cb) {
 const N8 = [[1, 0, 10], [-1, 0, 10], [0, 1, 10], [0, -1, 10], [1, 1, 14], [1, -1, 14], [-1, 1, 14], [-1, -1, 14]];
 const FLOW_INF = 1 << 30;
 const heapC = new Int32Array(MW * MH * 4), heapK = new Int32Array(MW * MH * 4);
-function flowField(out, sources) {
+function flowField(out, sources, maxCost = FLOW_INF) {
   out.fill(FLOW_INF);
   let n = 0;
   const push = (c, k) => { let i = n++; while (i > 0) { const p = (i - 1) >> 1; if (heapK[p] <= k) break; heapC[i] = heapC[p]; heapK[i] = heapK[p]; i = p; } heapC[i] = c; heapK[i] = k; };
@@ -375,7 +521,7 @@ function flowField(out, sources) {
       let cost = base;
       if (m & MB_STRUCT) { const s = W.structAt[ni]; cost += s ? Math.min(600, 20 + (s.hp / 3) | 0) : 50; }
       const nk = out[c] + cost;
-      if (nk < out[ni] && n < heapC.length) { out[ni] = nk; push(ni, nk); }
+      if (nk < out[ni] && nk <= maxCost && n < heapC.length) { out[ni] = nk; push(ni, nk); }
     }
   }
 }

@@ -159,6 +159,7 @@ function boot() {
   addEventListener('resize', resize);
   addEventListener('orientationchange', () => setTimeout(resize, 200));
   bindInput();
+  loadArt();
   startBgTicker();
   requestAnimationFrame(frame);
 }

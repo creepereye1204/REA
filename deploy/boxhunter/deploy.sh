@@ -7,7 +7,7 @@ ROOT="$(cd "$HERE/../.." && pwd)"
 
 # Only the playable files — never .git, tools/ or analysis material.
 mkdir -p "$HERE/site"
-rsync -a --delete --include='/index.html' --include='/classic.html' --include='/game/***' --exclude='*' \
+rsync -a --delete --include='/index.html' --include='/classic.html' --include='/game/***' --include='/assets/***' --exclude='*' \
   "$ROOT/" "$HERE/site/"
 
 cd "$HERE"

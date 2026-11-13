@@ -1,6 +1,6 @@
 # REA — Cell Siege: Nightfall (+ reverse-engineering study)
 
-**▶ Play:** https://creepereye1204.github.io/REA/
+**▶ Play:** https://creepereye1204.github.io/REA/ · self-hosted copy: https://www.boxhunter.p-e.kr
 
 This repo has three parts:
 
@@ -8,10 +8,15 @@ This repo has three parts:
 2. **Cell Siege Classic** ([`classic.html`](classic.html), [`game/main.js`](game/main.js)): an arena shooter. Its gameplay systems are ported 1:1 from a decompiled Flash-era game and run at the original fixed 50 fps.
 3. **[ANALYSIS.md](ANALYSIS.md)**: the reverse-engineering write-up behind the classic port. It covers deobfuscating the bytecode, the flow-field pathfinding, the combo multiplier and the upgrade tables.
 
-Everything is vanilla JS and Canvas, with no build step and no image assets.
+Everything is vanilla JS and Canvas with no build step. Characters and the world are drawn procedurally; item icons, character/boss portraits and story illustrations in [`assets/`](assets/) were generated locally with **Qwen-Image-2.1-Turbo** (see `assets/art.json`).
 
 ## Nightfall: how it plays
-- **Day:** explore a 192×160-tile procedurally generated world (towns, police station, clinic, garages, warehouses, cars, forests and lakes). You can:
+- **Story:** the base radio starts the main line → amplify the signal at the radio tower → two branches:
+  - **Cure:** kill the hospital's Broodmother for the lab keycard, open the Hanbit lab, kill Subject X-13, rescue Dr. Han, gather reagents, then hold the base for two nights.
+  - **Evacuation:** meet Sgt. Yoon at the military checkpoint, bring helicopter fuel, kill the Red Dawn cult's priest, rescue the pilot-mechanic, then hold the rooftop helipad for 120 s.
+  - **Villages:** each of the four village elders (!) gives a 3-quest chain (deliveries, rescues, hunts, boss bounties). Trust lowers their prices; finishing all four unlocks the **community** ending.
+  - A hidden **warlord** ending, 30 collectible notes/tapes, daily radio chatter. Journal: **J**.
+- **Day:** explore a 256×224-tile procedurally generated world with 4 villages, 4 bandit camps and 10 landmarks (hospital, lab, military checkpoint, radio tower, church, prison, gas station, farm, school, helipad). You can:
   - Loot containers and chop trees for wood.
   - Rescue survivors.
   - Trade at villages or with the travelling merchant who visits your base.
@@ -21,8 +26,10 @@ Everything is vanilla JS and Canvas, with no build step and no image assets.
   - **Steal:** crouch to stay unseen. Villagers who can see you show an eye icon. If you're caught, the whole village turns hostile and its guards attack.
   - **Kill:** anyone you kill drops everything they carry. Killing a trader drops their entire shop stock.
 - **Enemies:**
-  - Zombies: walker, crawler, runner, spitter (ranged acid), brute (wall breaker), bloater (explodes), screamer (calls runners), and the Blood Fiend boss every 5th night.
-  - Bandits: thug, gunner, SMG, shotgun, sniper, and a boss. They hold camps full of loot, and from day 3 they sometimes raid your base in daylight.
+  - Zombies: walker, crawler, runner, spitter (ranged acid), brute (wall breaker), bloater (explodes), screamer (calls runners), hound (packs), riot (frontal shield), toxic (gas cloud on death), stalker (near-invisible, lunges).
+  - Bosses: Blood Fiend / Goliath on boss nights; landmark bosses Broodmother (spawns crawlers), Goliath (charges through walls), Subject X-13 (blink dashes).
+  - Bandits: thug, gunner, SMG, shotgun, sniper, and four named camp bosses. From day 3 they sometimes raid your base in daylight.
+  - Factions: the Red Dawn cult (fire-bomb throwers) and the military remnant (neutral unless you shoot them; Sgt. Yoon trades military gear).
 - **NPC AI:** NPCs use A* paths, take cover at range, strafe, reload, flee when hurt, and fight each other (bandits, villagers and zombies).
 - **Survivors:** each has a perk:
   - Marksman: better aim and damage.
@@ -32,7 +39,8 @@ Everything is vanilla JS and Canvas, with no build step and no image assets.
 
   Survivors eat 1 food each morning.
 - **Magazines:** each spare magazine is tracked separately. Reloading inserts the fullest spare and pouches the partial one. You buy magazines from traders or find them in loot.
-- **Workbench:** upgrade each weapon's damage, magazine size, fire rate and reload speed, up to 5 levels each.
+- **Workbench:** upgrade each weapon's damage, magazine size, fire rate and reload speed (5 levels each), and craft grenades, molotovs, bandages, adrenaline, mines and body armor.
+- **Items:** bandages, body armor (absorbs half the damage), molotovs (fire area), adrenaline, fuel/electronics/chemicals, and valuables to sell.
 - **Building:** build within the core radius:
   - wood and metal walls
   - doors (allies only)
@@ -54,7 +62,8 @@ Everything is vanilla JS and Canvas, with no build step and no image assets.
 | Aim / fire | Mouse / left click | Right thumb (aim assist, fires when pushed) |
 | Use (tap = take/recruit/trade, hold = loot/chop/repair/revive) | E | 사용 |
 | Reload / weapons | R / 1–7, wheel, Q | 장전 / tap the weapon bar |
-| Eat / heal / grenade | F / H / G | 먹기 / 치료 / 수류 |
+| Eat / heal / grenade / molotov / adrenaline | F / H / G / T / V | 먹기 / 치료 / 수류(화염) / 아드 |
+| Journal (quests, notes) | J | 📜 |
 | Crouch (stealth) | C or Ctrl | 은신 |
 | Build mode | B, then 1–8 to pick, left click to place, right click/X to demolish | 건설 → 설치 / 철거 |
 | Map / help / menu | M / F1 / Esc | minimap tap / ☰ |
