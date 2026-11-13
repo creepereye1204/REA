@@ -701,7 +701,7 @@ function flowMove(e, field, sp) {
 function perceive(e, range) {
   let best = null, bd = range;
   const consider = t => {
-    if (!hostile(e, t)) return;
+    if (Math.abs(t.x - e.x) >= bd || Math.abs(t.y - e.y) >= bd || !hostile(e, t)) return;
     const d = dist(e.x, e.y, t.x, t.y);
     if (d >= bd) return;
     if (d > 2.5 && !los(e.x, e.y, t.x, t.y)) return;

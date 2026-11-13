@@ -86,8 +86,11 @@ function frame(ts) {
   const now = ts / 1000, dt = Math.min(0.1, now - (last || now)); last = now;
   acc += dt;
   let n = 0;
-  while (acc >= DT && n < 6) { step(); acc -= DT; n++; }
-  if (n >= 6) acc = 0;
+  // At most 3 catch-up steps per frame: on a slow device extra steps make the next frame
+  // slower still (spiral of death), so past that we let the game run slightly slow instead.
+  while (acc >= DT && n < 3) { step(); acc -= DT; n++; }
+  if (n >= 3) acc = 0;
+  adaptQuality(dt);
   sfxBudget = 0;
   if (G && !G.core) { ctx.setTransform(RS, 0, 0, RS, 0, 0); ctx.fillStyle = '#0d0e11'; ctx.fillRect(0, 0, VIEW_W, VIEW_H); txt(ctx, '월드 동기화 중…', VIEW_W / 2, VIEW_H / 2, '#ccc', 16, 'center'); }
   else draw(dt);
@@ -125,8 +128,23 @@ function resize() {
     if (VIEW_H < 560) { VIEW_H = 560; VIEW_W = Math.round(560 * cssW / cssH); }
   }
   const dpr = window.devicePixelRatio || 1;
-  RS = clamp(Math.min(cssW / VIEW_W, cssH / VIEW_H) * dpr, 0.75, 3);
+  // Full device resolution on a 3x phone is ~3M pixels per frame; cap the backing store
+  // (mobile 1.4M px, desktop 2.6M px) and let adaptQuality() lower it further if frames drag.
+  let rs = Math.min(cssW / VIEW_W, cssH / VIEW_H) * dpr;
+  const maxPx = mobile ? 1.4e6 : 2.6e6;
+  rs = Math.min(rs, Math.sqrt(maxPx / (VIEW_W * VIEW_H)), 2);
+  RS = clamp(rs * Q.k, 0.5, 2);
   canvas.width = Math.round(VIEW_W * RS); canvas.height = Math.round(VIEW_H * RS);
+}
+
+// Dynamic resolution: watch the frame time and trade sharpness for smoothness.
+const Q = { k: 1, ema: 16, slow: 0, fast: 0 };
+function adaptQuality(dt) {
+  if (document.hidden || dt <= 0 || dt >= 0.1) return; // ignore stalls from tab switches
+  Q.ema += (dt * 1000 - Q.ema) * 0.05;
+  if (Q.ema > 26) { Q.slow += dt; Q.fast = 0; } else if (Q.ema < 17) { Q.fast += dt; Q.slow = 0; } else { Q.slow = Q.fast = 0; }
+  if (Q.slow > 1.5 && Q.k > 0.45) { Q.k = Math.max(0.45, Q.k * 0.85); Q.slow = 0; Q.ema = 20; resize(); }
+  else if (Q.fast > 6 && Q.k < 1) { Q.k = Math.min(1, Q.k * 1.12); Q.fast = 0; resize(); }
 }
 function goFullscreen() {
   const el = document.documentElement;

@@ -525,6 +525,7 @@ function drawTouch(g) {
 
 // ── synth audio with distance falloff ─────────────────────────────────────
 let actx = null, master = null, sfxBudget = 0;
+const noiseBufs = {};
 function audioUnlock() {
   if (!actx) { try { actx = new (window.AudioContext || window.webkitAudioContext)(); master = actx.createGain(); master.gain.value = 0.8; master.connect(actx.destination); } catch (e) { actx = null; } }
   if (actx && actx.state === 'suspended') actx.resume().catch(() => {});
@@ -548,8 +549,11 @@ function sfx(name, x, y) {
   const [f, d, type, v] = SFX[name], t = actx.currentTime, gn = actx.createGain();
   gn.gain.setValueAtTime(v * vol, t); gn.gain.exponentialRampToValueAtTime(0.0001, t + d); gn.connect(master);
   if (type === 'noise') {
-    const len = Math.floor(actx.sampleRate * d), buf = actx.createBuffer(1, len, actx.sampleRate), ch = buf.getChannelData(0);
-    for (let i = 0; i < len; i++) ch[i] = (Math.random() * 2 - 1) * (1 - i / len);
+    let buf = noiseBufs[name]; // generated once per sound, reused for every shot
+    if (!buf) {
+      const len = Math.floor(actx.sampleRate * d), ch = (buf = noiseBufs[name] = actx.createBuffer(1, len, actx.sampleRate)).getChannelData(0);
+      for (let i = 0; i < len; i++) ch[i] = (Math.random() * 2 - 1) * (1 - i / len);
+    }
     const src = actx.createBufferSource(), flt = actx.createBiquadFilter(); flt.type = 'lowpass'; flt.frequency.value = f * 20;
     src.buffer = buf; src.connect(flt); flt.connect(gn); src.start(t);
   } else {

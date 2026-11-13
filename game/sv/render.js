@@ -17,7 +17,10 @@ const meP = () => G && G.players[V.me];
 function chunkCanvas(cx, cy) {
   const key = cx + ',' + cy;
   let c = V.chunks.get(key);
-  if (c) return c;
+  if (c) { V.chunks.delete(key); V.chunks.set(key, c); return c; } // LRU touch
+  // Each chunk is a 512x512 canvas (~1MB); exploring the whole map kept 120 of them alive.
+  // Keep the most recently used 36 (blood decals on evicted chunks are forgotten).
+  if (V.chunks.size >= 36) V.chunks.delete(V.chunks.keys().next().value);
   c = document.createElement('canvas'); c.width = c.height = CH * TILE;
   const g = c.getContext('2d');
   for (let y = 0; y < CH; y++) for (let x = 0; x < CH; x++) {
