@@ -209,3 +209,52 @@ function drawFurniture(g, b, ox, oy) {
     else if (k < 0.88) { g.fillStyle = 'rgba(100,10,10,.45)'; g.beginPath(); g.arc(x, y, 3 + R.f() * 5, 0, TAU); g.fill(); }
   }
 }
+
+// ── top-down character sprites (face the top of the image; rotated to the actor's facing) ──
+const CHR = { img: null, map: {}, tint: {} };
+function loadChars(m) {
+  if (!m || typeof Image === 'undefined') return;
+  const im = new Image();
+  im.onload = () => { CHR.img = im; CHR.map = m.map; CHR.tint = {}; };
+  im.src = 'assets/' + m.file + '?v=' + ART_V;
+}
+const HUMAN_SPR = { bandit_thug: 'bandit', bandit_gunner: 'bandit', bandit_smg: 'bandit', bandit_shotgun: 'bandit_heavy', bandit_sniper: 'bandit_heavy', bandit_boss: 'bandit_boss',
+  villager: 'villager', elder: 'villager', lost: 'villager', guard: 'guard', trader: 'trader', merchant: 'trader', survivor: 'survivor',
+  soldier: 'soldier', soldier_heavy: 'soldier', yoon: 'soldier', cultist: 'cultist', zealot: 'cultist', cult_priest: 'priest', dr_han: 'scientist' };
+function charKey(kind, id) {
+  if (kind === 'walker') return 'walker' + (1 + (id % 3));
+  return MOBS[kind] ? kind : HUMAN_SPR[kind];
+}
+const chrOk = key => CHR.img && key && CHR.map[key];
+// a copy of the sprite filled with one colour (hit flash), cached
+function chrTint(key, col) {
+  const id = key + col; if (CHR.tint[id]) return CHR.tint[id];
+  const r = CHR.map[key], c = document.createElement('canvas'); c.width = r[2]; c.height = r[3];
+  const g = c.getContext('2d'); g.drawImage(CHR.img, r[0], r[1], r[2], r[3], 0, 0, r[2], r[3]);
+  g.globalCompositeOperation = 'source-atop'; g.fillStyle = col; g.fillRect(0, 0, r[2], r[3]);
+  return (CHR.tint[id] = c);
+}
+// size in px across the sprite's longer side
+function charSize(kind) {
+  const d = MOBS[kind] || HUMANS[kind];
+  if (MOBS[kind]) return Math.max(34, d.r * TILE * 2.9) * (kind === 'hound' ? 1.15 : 1);
+  return d && d.boss ? 46 : 38;
+}
+// o: { walk, atk, flash, alpha, scale, down }
+function drawChar(g, key, x, y, ang, size, o = {}) {
+  const r = CHR.map[key]; if (!r || !CHR.img) return false;
+  const px = x * TILE, py = y * TILE - 8;
+  const bob = Math.sin(o.walk || 0), lunge = (o.atk || 0) * 6;
+  const k = size / Math.max(r[2], r[3]), w = r[2] * k * (o.scale || 1) * (1 + bob * 0.035), h = r[3] * k * (o.scale || 1) * (1 - bob * 0.02);
+  g.fillStyle = 'rgba(0,0,0,.32)'; g.beginPath(); g.ellipse(px + 3, py + 11, w * 0.42, w * 0.22, 0, 0, TAU); g.fill();
+  g.save();
+  g.translate(px + Math.cos(ang) * lunge, py + Math.sin(ang) * lunge);
+  g.rotate(ang + Math.PI / 2 + bob * 0.07 + (o.down ? 1.4 : 0));
+  if (o.alpha !== undefined) g.globalAlpha = o.alpha;
+  if (o.down) g.globalAlpha = (o.alpha === undefined ? 1 : o.alpha) * 0.85;
+  g.drawImage(CHR.img, r[0], r[1], r[2], r[3], -w / 2, -h / 2, w, h);
+  if (o.flash) { g.globalAlpha = 0.75; g.drawImage(chrTint(key, '#ffffff'), -w / 2, -h / 2, w, h); }
+  else if (o.hurt) { g.globalAlpha = o.hurt * 0.45; g.drawImage(chrTint(key, '#b00000'), -w / 2, -h / 2, w, h); }
+  g.restore();
+  return true;
+}

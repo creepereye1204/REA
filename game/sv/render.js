@@ -9,7 +9,7 @@ const V = {
 };
 
 // ── generated art (item icons, portraits, illustrations) ──────────────────
-const ART_V = 3; // bump when assets/ change so browsers refetch
+const ART_V = 4; // bump when assets/ change so browsers refetch
 const ART = { items: null, im: {}, por: null, pm: {}, scenes: {}, sceneSrc: {} };
 function loadArt() {
   if (typeof fetch !== 'function' || typeof Image === 'undefined') return;
@@ -17,6 +17,7 @@ function loadArt() {
     ART.im = m.items.map; ART.pm = m.portraits.map; ART.sceneSrc = m.scenes;
     if (m.ground) loadGroundArt(m.ground);
     if (m.sprites) loadSprites(m.sprites);
+    if (m.chars) loadChars(m.chars);
     ART.items = new Image(); ART.items.src = 'assets/' + m.items.file + '?v=' + ART_V;
     ART.por = new Image(); ART.por.src = 'assets/' + m.portraits.file + '?v=' + ART_V;
     sceneImg('scene_title');
@@ -191,6 +192,17 @@ function groundOverlay(g, tx, ty, px, py, t, h) {
   // soft contact shadow along the foot of walls
   if (inMap(tx, ty - 1) && TILE_OPAQUE[W.tile[idx(tx, ty - 1)]] && W.tile[idx(tx, ty - 1)] !== T.BUSH) { const gr = g.createLinearGradient(0, py, 0, py + 12); gr.addColorStop(0, 'rgba(0,0,0,.35)'); gr.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = gr; g.fillRect(px, py, TILE, 12); }
 }
+// sprite corpse: the character lying where it fell, darkened, in a pool of blood
+function corpseSprite(x, y, key, size, a) {
+  const cx = Math.floor(x / CH), cy = Math.floor(y / CH), c = V.chunks.get(cx + ',' + cy), r = CHR.map[key];
+  if (!c || !r) return;
+  const g = c.getContext('2d'), ox = (x - cx * CH) * TILE + Math.cos(a) * 10, oy = (y - cy * CH) * TILE - 8 + Math.sin(a) * 10, s = size / Math.max(r[2], r[3]);
+  g.fillStyle = 'rgba(70,6,6,.55)'; g.beginPath(); g.ellipse(ox, oy, size * 0.45, size * 0.32, a, 0, TAU); g.fill();
+  g.save(); g.translate(ox, oy); g.rotate(a + Math.PI / 2 + 1.3); g.globalAlpha = 0.9;
+  g.drawImage(CHR.img, r[0], r[1], r[2], r[3], -r[2] * s * 0.44, -r[3] * s * 0.44, r[2] * s * 0.88, r[3] * s * 0.88);
+  g.globalAlpha = 0.45; g.drawImage(chrTint(key, '#1a0606'), -r[2] * s * 0.44, -r[3] * s * 0.44, r[2] * s * 0.88, r[3] * s * 0.88);
+  g.restore();
+}
 // a body left on the ground (drawn into the terrain chunk, so it stays until the chunk is evicted)
 function corpse(x, y, color, big) {
   const cx = Math.floor(x / CH), cy = Math.floor(y / CH), c = V.chunks.get(cx + ',' + cy);
@@ -252,7 +264,7 @@ function applyFx(o) {
       break;
     case 'lightning': V.flashT = 0.35; V.shake = Math.max(V.shake, 3); setTimeout(() => sfx('thunder'), 300 + Math.random() * 900); break;
     case 'blood': for (let k = 0; k < 5; k++) V.parts.push({ k: 'drop', x: o.x, y: o.y, z: 0.6, vx: rnd(-2, 2), vy: rnd(-2, 2), vz: rnd(1, 3), c: o.z ? '#3a5a1a' : '#8a1010', t: 0, life: 0.6 }); decal(o.x, o.y, 0.25, o.z ? '#2a3a12' : '#5b0f0f', 2); break;
-    case 'gib': corpse(o.x, o.y, o.c, o.big);
+    case 'gib': if (o.kind && chrOk(charKey(o.kind, o.id || 0))) { const key = charKey(o.kind, o.id || 0); V.parts.push({ k: 'dying', key, x: o.x, y: o.y, a: o.a || rnd(0, TAU), size: charSize(o.kind), t: 0, life: 0.45 }); setTimeout(() => corpseSprite(o.x, o.y, key, charSize(o.kind), o.a || 0), 450); } else corpse(o.x, o.y, o.c, o.big);
       for (let k = 0; k < (o.big ? 14 : 8); k++) V.parts.push({ k: 'chunk', x: o.x, y: o.y, z: 0.6, vx: rnd(-3, 3), vy: rnd(-3, 3), vz: rnd(2, 5), c: k % 2 ? o.c : '#5a0a0a', t: 0, life: 0.9 }); decal(o.x, o.y, o.big ? 0.6 : 0.4, '#4a0c0c', o.big ? 14 : 8); break;
     case 'boom':
       V.parts.push({ k: 'boom', x: o.x, y: o.y, r: o.r, fire: o.fire, t: 0, life: o.r > 1 ? 0.45 : 0.25 });
@@ -845,6 +857,18 @@ function roundRect(g, x, y, w, h, r) { g.beginPath(); g.moveTo(x + r, y); g.arcT
 const GUN_LOOK = { pistol: [10, '#222', 4], smg: [15, '#2a2a2a', 5], shotgun: [20, '#4a3020', 5], rifle: [22, '#2a3020', 5], sniper: [28, '#203020', 4], launcher: [24, '#3a4a3a', 8], machete: [16, '#ccc', 3] };
 function drawEnt(g, e) {
   const x = e.rx !== undefined ? e.rx : e.x, y = e.ry !== undefined ? e.ry : e.y;
+  const ck = charKey(e.kind, e.id);
+  if (chrOk(ck)) {
+    const d = e.def;
+    let alpha;
+    if (d.stealth && !(e.revealT > 0) && !(e.flash > 0)) { const p = meP(); alpha = p && dist(p.x, p.y, x, y) < 4.5 ? 0.85 : 0.13; }
+    if (d.gas) { g.fillStyle = `rgba(140,220,60,${0.18 + 0.08 * Math.sin(V.frame / 7 + e.id)})`; g.beginPath(); g.arc(x * TILE, y * TILE - 8, 22, 0, TAU); g.fill(); }
+    if (e.kind === 'x13' && e.revealT > 0) drawChar(g, ck, x - Math.cos(e.angle) * 0.6, y - Math.sin(e.angle) * 0.6, e.angle, charSize(e.kind), { alpha: 0.3 });
+    drawChar(g, ck, x, y, e.angle, charSize(e.kind) * (d.boss && e.cat === 'human' ? 1.15 : 1), { walk: e.walk * 0.9, atk: e.atkAnim, flash: e.flash > 0, alpha, hurt: e.maxHp ? Math.max(0, 0.6 - e.hp / e.maxHp) : 0 });
+    if (e.cat === 'human' && e.wpn && !WEAPONS[e.wpn].melee && e.fireT > 0 && e.fireT > WEAPONS[e.wpn].rate) { /* muzzle flash comes from fx */ }
+    if (e.hp < e.maxHp) bar(g, x, y - (d.r > 0.5 ? 1.5 : 1.05), d.boss ? 40 : 22, e.hp / e.maxHp, e.cat === 'mob' ? (d.boss ? '#f84' : '#9d5') : e.team === 'player' ? '#7dff9a' : '#e84');
+    return;
+  }
   if (e.cat === 'mob') {
     const d = e.def;
     if (d.dog) { drawHound(g, x, y, e); if (e.hp < e.maxHp) bar(g, x, y - 0.9, 18, e.hp / e.maxHp, '#9d5'); return; }
@@ -890,11 +914,34 @@ function drawHound(g, x, y, e) {
   if (e.atkAnim > 0) { g.fillStyle = '#eee'; g.fillRect(hx + ca * 5 - 2, hy + 1, 4, 2); }
 }
 function bar(g, x, y, w, k, c) { const px = x * TILE - w / 2, py = y * TILE; g.fillStyle = '#000'; g.fillRect(px, py, w, 3); g.fillStyle = c; g.fillRect(px, py, w * clamp(k, 0, 1), 3); }
+// tyre marks on the road and dust off-road behind a moving car
+function carTrail(p) {
+  const v = p.veh, sp = Math.abs(v.spd); if (sp < 2) { v.pa = v.ang; return; }
+  const turn = Math.abs(angDiff(v.pa === undefined ? v.ang : v.pa, v.ang)) / (V.dt || 0.016); v.pa = v.ang;
+  const cx = Math.floor(p.x), cy = Math.floor(p.y), t = inMap(cx, cy) ? W.tile[idx(cx, cy)] : 0, paved = t === T.ROAD || t === T.CONCRETE || t === T.WALK;
+  for (const sd of [-1, 1]) {
+    const wx = p.x - Math.cos(v.ang) * 0.75 - Math.sin(v.ang) * 0.38 * sd, wy = p.y - Math.sin(v.ang) * 0.75 + Math.cos(v.ang) * 0.38 * sd;
+    if (paved && turn > 1.6 && sp > 6) decal(wx, wy, 0.02, 'rgba(15,15,15,.6)', 1);
+    else if (!paved && Math.random() < 0.5) V.parts.push({ k: 'smoke', x: wx, y: wy + 0.3, t: 0, life: rnd(0.5, 1), s: rnd(3, 6), dust: 1 });
+  }
+}
 function drawPlayer(g, p) {
+  if (p.veh) carTrail(p);
   if (p.ride !== undefined) { const d = G.players[p.ride]; if (d && d.veh) { const x = p.x * TILE, y = p.y * TILE - 8; g.strokeStyle = '#222'; g.lineWidth = 4; g.beginPath(); g.moveTo(x, y); g.lineTo(x + Math.cos(p.angle) * 16, y + Math.sin(p.angle) * 16); g.stroke(); g.fillStyle = p.color; g.beginPath(); g.arc(x, y, 5, 0, TAU); g.fill(); g.strokeStyle = 'rgba(0,0,0,.6)'; g.lineWidth = 1; g.stroke(); return; } }
   if (p.veh) { drawCar(g, p.x * TILE, p.y * TILE, p.veh.ang, p.veh.color, { lights: G.phase !== 'day', brake: p.veh.spd < 1, driver: p.color }); return; }
   const gl = GUN_LOOK[p.wpn];
   const swing = p.wpn === 'machete' && p.fireT > 0.2;
+  const pk = p.pid ? 'player_orange' : 'player_blue';
+  if (chrOk(pk)) {
+    drawChar(g, pk, p.x, p.y, p.angle + (swing ? 0.6 : 0), 38, { walk: p.walk * 0.8, flash: p.flash > 0, down: p.down });
+    if (!p.down) { // the weapon in your hands
+      const gl2 = GUN_LOOK[p.wpn], a = p.angle + (swing ? 0.8 : 0), hx = p.x * TILE + Math.cos(a) * 8, hy = p.y * TILE - 8 + Math.sin(a) * 8;
+      g.strokeStyle = 'rgba(0,0,0,.6)'; g.lineWidth = gl2[2] + 2; g.lineCap = 'butt'; g.beginPath(); g.moveTo(hx, hy); g.lineTo(hx + Math.cos(a) * gl2[0], hy + Math.sin(a) * gl2[0]); g.stroke();
+      g.strokeStyle = gl2[1]; g.lineWidth = gl2[2]; g.beginPath(); g.moveTo(hx, hy); g.lineTo(hx + Math.cos(a) * gl2[0], hy + Math.sin(a) * gl2[0]); g.stroke();
+    }
+    if (p.in && p.in.crouch && !p.down) { g.fillStyle = 'rgba(160,200,255,.7)'; g.font = '10px system-ui'; g.textAlign = 'center'; g.fillText('은신', p.x * TILE, p.y * TILE + 22); }
+    return;
+  }
   if (!p.down) { // backpack, on the side away from where you aim
     const bx = p.x * TILE - Math.cos(p.angle) * 6, by = p.y * TILE - 17 - Math.sin(p.angle) * 3;
     g.fillStyle = '#5a4a32'; roundRect(g, bx - 7, by - 6, 14, 13, 4); g.fill(); g.strokeStyle = 'rgba(0,0,0,.5)'; g.lineWidth = 1; g.stroke();
@@ -945,9 +992,16 @@ function drawPart(g, p) {
       g.fillStyle = p.green ? '#d0ff90' : '#fff3c4'; g.beginPath(); g.arc(x, y - 8, r * 0.5 * (1 - k), 0, TAU); g.fill();
       g.globalAlpha = 1; break;
     }
-    case 'smoke': g.fillStyle = `rgba(90,90,90,${0.35 * (1 - k)})`; g.beginPath(); g.arc(x, y - 14 - k * 20, (p.s || 6) * (0.5 + k), 0, TAU); g.fill(); break;
+    case 'smoke': g.fillStyle = p.dust ? `rgba(150,130,100,${0.35 * (1 - k)})` : `rgba(90,90,90,${0.35 * (1 - k)})`; g.beginPath(); g.arc(x, y - 14 - k * 20, (p.s || 6) * (0.5 + k), 0, TAU); g.fill(); break;
     case 'spark': g.fillStyle = `rgba(255,220,150,${1 - k})`; g.fillRect(x - 2, y - 16, 4, 4); break;
     case 'swing': g.strokeStyle = `rgba(255,255,255,${0.7 * (1 - k)})`; g.lineWidth = 3; g.beginPath(); g.arc(x, y - 16, 26, p.a - 0.9, p.a + 0.9); g.stroke(); break;
+    case 'dying': { // topple over, flash red, sink
+      const r = CHR.map[p.key]; if (!r) break;
+      const s = p.size / Math.max(r[2], r[3]), w = r[2] * s * (1 - k * 0.12), h = r[3] * s * (1 - k * 0.12);
+      g.save(); g.translate(x + Math.cos(p.a) * k * 10, y - 8 + Math.sin(p.a) * k * 10); g.rotate(p.a + Math.PI / 2 + k * 1.3);
+      g.globalAlpha = 1 - k * 0.3; g.drawImage(CHR.img, r[0], r[1], r[2], r[3], -w / 2, -h / 2, w, h);
+      g.globalAlpha = (1 - k) * 0.6; g.drawImage(chrTint(p.key, '#900000'), -w / 2, -h / 2, w, h); g.restore(); g.globalAlpha = 1; break;
+    }
     case 'impact': { const r = 6 + k * 14; g.strokeStyle = p.c ? `rgba(255,220,80,${1 - k})` : `rgba(255,255,255,${0.9 * (1 - k)})`; g.lineWidth = 2.5; g.beginPath(); for (let i = 0; i < 4; i++) { const a = i * Math.PI / 2 + 0.78; g.moveTo(x + Math.cos(a) * r * 0.4, y - 16 + Math.sin(a) * r * 0.4); g.lineTo(x + Math.cos(a) * r, y - 16 + Math.sin(a) * r); } g.stroke(); break; }
     case 'killring': g.strokeStyle = `rgba(255,80,60,${0.8 * (1 - k)})`; g.lineWidth = 3; g.beginPath(); g.arc(x, y - 14, 10 + k * 34, 0, TAU); g.stroke(); break;
     case 'shell': { g.save(); g.translate(x, y - p.z * TILE); g.rotate(p.rot + p.t * 12 * (p.z > 0 ? 1 : 0)); g.fillStyle = '#d8b040'; g.fillRect(-2, -1, 4, 2); g.restore(); break; }
@@ -1101,6 +1155,19 @@ function drawLighting(g, sx, sy) {
     for (const v of W.villages) glow(v.stall.x, v.stall.y, 4.5, '255,190,110', 0.18 * ga);
     for (const l of V.lights) if (l.c) glow(l.x, l.y, l.r * 1.3, l.c, Math.min(0.5, l.t * 8) * ga);
     glow(G.core.x, G.core.y, 4, '120,200,255', 0.16 * ga);
+    // eyes in the dark
+    for (const e of G.ents) {
+      if (e.cat !== 'mob') continue;
+      const ex = (e.rx !== undefined ? e.rx : e.x) * TILE - sx, ey = (e.ry !== undefined ? e.ry : e.y) * TILE - sy - 8;
+      if (ex < -20 || ey < -20 || ex > VIEW_W + 20 || ey > VIEW_H + 20) continue;
+      const a = e.angle, f = e.def.r * TILE * 0.55, side = e.def.r * TILE * 0.28, col = e.kind === 'x13' ? '90,255,255' : e.kind === 'fiend' ? '255,210,60' : '255,40,30';
+      const al = (e.def.stealth && !(e.revealT > 0) ? 0.35 : 0.85) * ga * (0.8 + 0.2 * Math.sin(V.frame / 7 + e.id));
+      for (const sd of [-1, 1]) {
+        const px = ex + Math.cos(a) * f - Math.sin(a) * side * sd, py = ey + Math.sin(a) * f + Math.cos(a) * side * sd;
+        const gr = g.createRadialGradient(px, py, 0, px, py, 5); gr.addColorStop(0, `rgba(${col},${al})`); gr.addColorStop(1, `rgba(${col},0)`);
+        g.fillStyle = gr; g.fillRect(px - 5, py - 5, 10, 10);
+      }
+    }
     for (const p of V.amb || []) if (p.k === 'fly') { const k = Math.min(1, p.t, p.life - p.t) * (0.5 + 0.5 * Math.sin(p.t * 4 + p.s * 10)); const gr = g.createRadialGradient(p.x - sx, p.y - sy, 0, p.x - sx, p.y - sy, 7); gr.addColorStop(0, `rgba(200,255,120,${0.9 * k})`); gr.addColorStop(1, 'rgba(200,255,120,0)'); g.fillStyle = gr; g.fillRect(p.x - sx - 7, p.y - sy - 7, 14, 14); }
     g.globalCompositeOperation = 'source-over';
   } else {

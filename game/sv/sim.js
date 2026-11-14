@@ -284,7 +284,7 @@ function kill(e, src) {
   e.dead = true; e.hp = 0;
   const byPlayer = src && src.team === 'player';
   if (e.cat === 'mob') {
-    fx({ k: 'gib', x: e.x, y: e.y, c: e.def.body, big: e.def.r > 0.5 ? 1 : 0 });
+    fx({ k: 'gib', x: e.x, y: e.y, c: e.def.body, big: e.def.r > 0.5 ? 1 : 0, kind: e.kind, id: e.id, a: +Math.atan2(e.vy || 0.001, e.vx || 0.001).toFixed(2) });
     sfxAt('kill', e.x, e.y);
     if (byPlayer) {
       G.kills++;
@@ -295,7 +295,7 @@ function kill(e, src) {
     if (e.def.explode) explode(e.x, e.y, e.def.explode.dmg, e.def.explode.r, e);
     if (e.def.gas) addHazard('gas', e.x, e.y, e.def.gas.r, e.def.gas.t, e.def.gas.dps, 'zombie');
   } else {
-    fx({ k: 'gib', x: e.x, y: e.y, c: '#7a1414', big: 0 });
+    fx({ k: 'gib', x: e.x, y: e.y, c: '#7a1414', big: 0, kind: e.kind, id: e.id, a: +Math.atan2(e.vy || 0.001, e.vx || 0.001).toFixed(2) });
     sfxAt('kill', e.x, e.y);
     const items = { ...e.inv };
     if (e.wpn && !WEAPONS[e.wpn].melee) { items['mag:' + e.wpn] = (items['mag:' + e.wpn] || 0) + 1; if (e.kind !== 'survivor') items['wpn:' + e.wpn] = 1; }

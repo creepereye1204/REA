@@ -4,6 +4,8 @@ import numpy as np
 from PIL import Image
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from prompts2 import TEXTURES, SPRITES, ICONS
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+from style import stylize
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, 'out')
@@ -42,10 +44,22 @@ def cutout(im, lo=60):
     im = im.convert('RGBA')
     a = np.array(im)
     al = a[..., 3].astype(np.float32)
-    if (al < 250).mean() < 0.05:  # no alpha produced: key out the flat border colour
-        rgb = a[..., :3].astype(np.int16)
-        bg = np.median(np.concatenate([rgb[0], rgb[-1], rgb[:, 0], rgb[:, -1]]), axis=0)
-        al = np.where(np.abs(rgb - bg).sum(-1) < 50, 0, 255).astype(np.float32)
+    if (al < 250).mean() < 0.05:  # no alpha produced: flood away the flat background from just inside the border
+        from collections import deque
+        rgb = a[..., :3].astype(np.int16); h, w = rgb.shape[:2]; m = 12
+        bg = np.median(np.concatenate([rgb[m, m:-m], rgb[-m, m:-m], rgb[m:-m, m], rgb[m:-m, -m]]), axis=0)
+        near = np.abs(rgb - bg).sum(-1) < 70
+        mask = np.zeros((h, w), bool); q = deque()
+        for x in range(w):
+            for y in (0, m, h - 1 - m, h - 1): q.append((y, x))
+        for y in range(h):
+            for x in (0, m, w - 1 - m, w - 1): q.append((y, x))
+        while q:
+            y, x = q.popleft()
+            if y < 0 or x < 0 or y >= h or x >= w or mask[y, x]: continue
+            if not near[y, x] and not (y < m or x < m or y >= h - m or x >= w - m): continue
+            mask[y, x] = True; q.extend(((y + 1, x), (y - 1, x), (y, x + 1), (y, x - 1)))
+        al = np.where(mask, 0, 255).astype(np.float32)
     a[..., 3] = np.clip((al - lo) * 255 / (250 - lo), 0, 255).astype(np.uint8)
     return Image.fromarray(a)
 
@@ -57,7 +71,8 @@ def sprite(key, maxside):
     if key.startswith('car') and im.height > im.width:  # cars face right (angle 0)
         im = im.rotate(-90, expand=True)
     k = maxside / max(im.width, im.height)
-    return im.resize((max(1, round(im.width * k)), max(1, round(im.height * k))), Image.LANCZOS)
+    im = im.resize((max(1, round(im.width * k)), max(1, round(im.height * k))), Image.LANCZOS)
+    return stylize(im, colors=22, outline=max(2, round(maxside / 48)))
 
 
 def pack(images, width=1024, pad=2):
@@ -105,7 +120,7 @@ cols, S = 8, 112
 items = Image.new('RGBA', (cols * S, ((len(keys) + cols - 1) // cols) * S), (0, 0, 0, 0))
 imap = {}
 for i, k in enumerate(keys):
-    items.paste(fit_square(cutout(Image.open(os.path.join(OUT, 'icon_' + k + '.png'))), S), ((i % cols) * S, (i // cols) * S))
+    items.paste(stylize(fit_square(cutout(Image.open(os.path.join(OUT, 'icon_' + k + '.png')), 130), S), colors=18, outline=3), ((i % cols) * S, (i // cols) * S))
     imap[k] = [(i % cols) * S, (i // cols) * S, S]
 items.save(os.path.join(DEST, 'items.webp'), 'WEBP', quality=88, method=6)
 
