@@ -1010,6 +1010,12 @@ function updateMob(e) {
   if (e.skillT > 0) e.skillT -= DT;
   if (e.revealT > 0) e.revealT -= DT;
   if (e.dashT > 0) return dashStep(e);
+  if (e.wind) { // wind-up: stand still, then go
+    if ((e.wind.t -= DT) > 0) return;
+    const a = e.wind.a, k = e.wind.k; e.wind = null; e.dvx = Math.cos(a); e.dvy = Math.sin(a); e.dashHit = false; e.atkAnim = 1;
+    if (k === 'charge') { e.dashT = 0.9; e.dsp = 9; fx({ k: 'scream', x: e.x, y: e.y }); } else { e.dashT = 0.35; e.dsp = 9; }
+    return;
+  }
   if (Math.abs(e.vx) + Math.abs(e.vy) > 0.002) { moveActor(e, e.vx, e.vy); e.vx *= 0.7; e.vy *= 0.7; return; }
   const night = G.phase === 'night';
   if ((G.tick + e.id) % 12 === 0) {
@@ -1085,8 +1091,8 @@ function mobSkill(e, t, d) {
   }
   if (d0.charge && e.skillT <= 0 && d > 2.5 && d < 10 && los(e.x, e.y, t.x, t.y)) {
     const a = Math.atan2(t.y - e.y, t.x - e.x);
-    e.skillT = 6; e.dashT = 0.9; e.dsp = 9; e.dvx = Math.cos(a); e.dvy = Math.sin(a); e.angle = a; e.dashHit = false; e.atkAnim = 1;
-    fx({ k: 'scream', x: e.x, y: e.y }); sfxAt('horn', e.x, e.y); return true;
+    e.skillT = 6; e.wind = { t: 0.65, k: 'charge', a }; e.angle = a;
+    fx({ k: 'tele', x: +e.x.toFixed(2), y: +e.y.toFixed(2), a: +a.toFixed(2), len: 8.1, w: e.def.r * 2, t: 0.65 }); sfxAt('horn', e.x, e.y); return true;
   }
   if (d0.blink && e.skillT <= 0 && d > 2.5 && d < 12) {
     const a = Math.atan2(t.y - e.y, t.x - e.x);
@@ -1095,8 +1101,8 @@ function mobSkill(e, t, d) {
   }
   if (d0.lunge && e.skillT <= 0 && d > 1.4 && d < 5 && los(e.x, e.y, t.x, t.y)) {
     const a = Math.atan2(t.y - e.y, t.x - e.x);
-    e.skillT = 3; e.dashT = 0.35; e.dsp = 9; e.dvx = Math.cos(a); e.dvy = Math.sin(a); e.dashHit = false; e.revealT = 2; e.atkAnim = 1;
-    sfxAt('scream', e.x, e.y); return true;
+    e.skillT = 3; e.wind = { t: 0.3, k: 'lunge', a }; e.revealT = 2.4; e.angle = a;
+    fx({ k: 'tele', x: +e.x.toFixed(2), y: +e.y.toFixed(2), a: +a.toFixed(2), len: 3.2, w: 0.7, t: 0.3 }); sfxAt('scream', e.x, e.y); return true;
   }
   return false;
 }
