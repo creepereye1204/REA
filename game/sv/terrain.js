@@ -154,3 +154,58 @@ function drawSprite(g, key, x, y, w, rot, alpha) {
   if (alpha !== undefined) g.globalAlpha = 1;
   return true;
 }
+
+// ── interior furniture painted into the floor (flat, so it never blocks movement) ──
+const FURN = {
+  house: ['bed', 'table', 'sofa', 'rug', 'tv'], apartment: ['bed', 'sofa', 'table', 'rug', 'bed'], cabin: ['bed', 'fireplace', 'table'], farmhouse: ['bed', 'table', 'rug'],
+  store: ['counter', 'aisle', 'aisle'], mart: ['counter', 'aisle', 'aisle', 'aisle', 'aisle', 'cart'], station: ['counter', 'aisle'],
+  office: ['desks', 'desks', 'plant'], police: ['desks', 'bench', 'desks'], clinic: ['hbed', 'hbed', 'curtain'], hospital: ['hbed', 'hbed', 'hbed', 'hbed', 'curtain', 'hbed'],
+  school: ['classroom', 'classroom'], church: ['pews', 'pews'], barracks: ['bunk', 'bunk', 'bunk'], bunker: ['bunk', 'table'], cellblock: ['cells', 'cells'],
+  lab: ['labtable', 'labtable', 'labtable'], warehouse: ['pallet', 'pallet', 'pallet'], garage: ['oil', 'lift'], tower: ['desks'],
+};
+function drawFurniture(g, b, ox, oy) {
+  const R = rng(W.seed ^ (b.id * 2654435761));
+  const kinds = FURN[b.type] || []; if (!kinds.length) return;
+  const ix = b.x + 1, iy = b.y + 1, iw = b.w - 2, ih = b.h - 2;
+  const T2 = TILE, used = [];
+  const free = (x, y, w, h) => {
+    for (let j = y; j < y + h; j++) for (let i = x; i < x + w; i++) { if (i < ix || j < iy || i >= ix + iw || j >= iy + ih) return false; const t = W.tile[idx(i, j)]; if (t !== T.FLOOR || W.contAt[idx(i, j)]) return false; if (b.doors.some(([dx, dy]) => Math.abs(dx - i) + Math.abs(dy - j) <= 1)) return false; }
+    return !used.some(u => x < u[0] + u[2] && x + w > u[0] && y < u[1] + u[3] && y + h > u[1]);
+  };
+  const place = (w, h) => { for (let k = 0; k < 30; k++) { const x = ix + R.i(Math.max(1, iw - w + 1)), y = iy + R.i(Math.max(1, ih - h + 1)); if (free(x, y, w, h)) { used.push([x, y, w, h]); return [x * T2 - ox, y * T2 - oy, w * T2, h * T2]; } } return null; };
+  const rect = (c, x, y, w, h, r = 3) => { g.fillStyle = c; roundRect(g, x, y, w, h, r); g.fill(); };
+  const shadow = (x, y, w, h) => { g.fillStyle = 'rgba(0,0,0,.25)'; g.fillRect(x + 3, y + 4, w, h); };
+  for (const k of kinds) {
+    switch (k) {
+      case 'bed': { const p = place(2, 3) || place(3, 2); if (!p) break; const [x, y, w, h] = p; shadow(x + 3, y + 3, w - 6, h - 6); rect('#5a4030', x + 3, y + 3, w - 6, h - 6); rect(['#6a7a9a', '#9a6a6a', '#7a8a6a'][R.i(3)], x + 5, y + 14, w - 10, h - 20); rect('#e8e0d0', x + 7, y + 6, w - 14, 9); break; }
+      case 'hbed': { const p = place(1, 2); if (!p) break; const [x, y, w, h] = p; shadow(x + 4, y + 2, w - 8, h - 4); rect('#c8ccd0', x + 4, y + 2, w - 8, h - 4); rect('#e8eef2', x + 6, y + 4, w - 12, 8); rect('#a8c0d0', x + 6, y + 16, w - 12, h - 22); if (R.f() < 0.5) { g.fillStyle = 'rgba(120,10,10,.5)'; g.beginPath(); g.arc(x + 16, y + 30, 6, 0, TAU); g.fill(); } break; }
+      case 'bunk': { const p = place(1, 2); if (!p) break; const [x, y, w, h] = p; shadow(x + 3, y + 2, w - 6, h - 4); rect('#4a5040', x + 3, y + 2, w - 6, h - 4); rect('#6a7058', x + 5, y + 5, w - 10, h - 10); rect('#d0ccb8', x + 6, y + 6, w - 12, 7); break; }
+      case 'table': { const p = place(2, 2); if (!p) break; const [x, y, w, h] = p; for (const [cx, cy] of [[x + 6, y + h / 2 - 5], [x + w - 16, y + h / 2 - 5], [x + w / 2 - 5, y + 2], [x + w / 2 - 5, y + h - 12]]) rect('#5a3c24', cx, cy, 10, 10, 2); shadow(x + 12, y + 12, w - 24, h - 24); rect('#8a6440', x + 12, y + 12, w - 24, h - 24, 4); break; }
+      case 'sofa': { const p = place(3, 1) || place(1, 3); if (!p) break; const [x, y, w, h] = p; shadow(x + 2, y + 4, w - 4, h - 8); rect(['#6a4a5a', '#4a5a6a', '#6a5a3a'][R.i(3)], x + 2, y + 4, w - 4, h - 8, 5); g.fillStyle = 'rgba(0,0,0,.2)'; g.fillRect(x + 6, y + 8, w - 12, 4); break; }
+      case 'rug': { const p = place(3, 2); if (!p) break; const [x, y, w, h] = p; rect(['#7a3030', '#30507a', '#6a5a2a'][R.i(3)], x + 4, y + 4, w - 8, h - 8, 2); g.strokeStyle = 'rgba(230,210,160,.5)'; g.lineWidth = 2; g.strokeRect(x + 9, y + 9, w - 18, h - 18); used.pop(); break; }
+      case 'tv': { const p = place(2, 1); if (!p) break; const [x, y, w, h] = p; rect('#3a2a20', x + 2, y + 10, w - 4, 12); rect('#111', x + 10, y + 6, w - 20, 6, 1); break; }
+      case 'fireplace': { const p = place(2, 1); if (!p) break; const [x, y, w, h] = p; rect('#6a6460', x + 2, y + 2, w - 4, h - 4); rect('#2a1a10', x + 10, y + 8, w - 20, h - 14); break; }
+      case 'counter': { const p = place(3, 1); if (!p) break; const [x, y, w, h] = p; shadow(x, y + 6, w, h - 12); rect('#6a5a4a', x, y + 6, w, h - 12, 2); rect('#2a2a2a', x + 8, y + 10, 14, 10, 2); break; }
+      case 'aisle': { const p = place(Math.min(5, iw - 1), 1); if (!p) break; const [x, y, w, h] = p; shadow(x + 2, y + 8, w - 4, h - 16); rect('#7a7a80', x + 2, y + 8, w - 4, h - 16, 1); for (let i = x + 4; i < x + w - 8; i += 7) { g.fillStyle = ['#c84a3a', '#e8c040', '#4a8ac8', '#6ab04a'][(i / 7 | 0) % 4]; g.fillRect(i, y + 10, 5, h - 20); } break; }
+      case 'cart': { const p = place(1, 1); if (!p) break; const [x, y] = p; g.strokeStyle = '#aab'; g.lineWidth = 2; g.strokeRect(x + 6, y + 8, 20, 14); break; }
+      case 'desks': { for (let n = 0; n < 3; n++) { const p = place(2, 1); if (!p) break; const [x, y, w, h] = p; shadow(x + 3, y + 6, w - 6, h - 12); rect('#7a6a52', x + 3, y + 6, w - 6, h - 12, 2); rect('#222', x + w / 2 - 6, y + 8, 12, 6, 1); g.fillStyle = '#e8e8e0'; g.fillRect(x + 8, y + 10, 8, 6); } break; }
+      case 'bench': { const p = place(3, 1); if (!p) break; const [x, y, w, h] = p; rect('#5a4a3a', x + 2, y + 10, w - 4, 10, 2); break; }
+      case 'plant': { const p = place(1, 1); if (!p) break; const [x, y] = p; rect('#6a4a30', x + 10, y + 12, 12, 12, 3); g.fillStyle = '#4a7a3a'; g.beginPath(); g.arc(x + 16, y + 12, 9, 0, TAU); g.fill(); break; }
+      case 'curtain': { const p = place(1, 3); if (!p) break; const [x, y, w, h] = p; g.fillStyle = 'rgba(160,200,200,.6)'; g.fillRect(x + 14, y + 2, 4, h - 4); break; }
+      case 'classroom': { for (let r = 0; r < 2; r++) for (let c = 0; c < 3; c++) { const p = place(1, 1); if (!p) break; const [x, y] = p; rect('#8a6a40', x + 6, y + 8, 20, 12, 2); rect('#5a4a3a', x + 11, y + 22, 10, 6, 2); } break; }
+      case 'pews': { for (let r = 0; r < 4; r++) { const p = place(Math.min(4, iw - 2), 1); if (!p) break; const [x, y, w, h] = p; shadow(x + 2, y + 10, w - 4, 10); rect('#5a3a24', x + 2, y + 10, w - 4, 10, 2); } break; }
+      case 'cells': { const p = place(Math.min(6, iw - 1), 2); if (!p) break; const [x, y, w, h] = p; g.strokeStyle = '#6a6a70'; g.lineWidth = 2; for (let i = x; i <= x + w; i += 6) { g.beginPath(); g.moveTo(i, y + h - 2); g.lineTo(i, y + h - 10); g.stroke(); } g.beginPath(); g.moveTo(x, y + h - 6); g.lineTo(x + w, y + h - 6); g.stroke(); rect('#6a6458', x + 4, y + 4, 22, 12, 2); break; }
+      case 'labtable': { const p = place(3, 1); if (!p) break; const [x, y, w, h] = p; shadow(x + 2, y + 6, w - 4, h - 12); rect('#c8d0d8', x + 2, y + 6, w - 4, h - 12, 2); for (let i = 0; i < 4; i++) { g.fillStyle = ['#5af', '#8f8', '#fa5', '#c8f'][i]; g.beginPath(); g.arc(x + 12 + i * 18, y + 16, 3, 0, TAU); g.fill(); } break; }
+      case 'pallet': { const p = place(2, 2); if (!p) break; const [x, y, w, h] = p; rect('#8a6a40', x + 4, y + 4, w - 8, h - 8, 1); g.fillStyle = 'rgba(0,0,0,.25)'; for (let i = 0; i < 4; i++) g.fillRect(x + 6, y + 8 + i * 12, w - 12, 2); rect('#a89070', x + 10, y + 10, w - 20, h - 20, 2); break; }
+      case 'oil': { const p = place(2, 2); if (!p) break; const [x, y, w, h] = p; g.fillStyle = 'rgba(10,10,14,.45)'; g.beginPath(); g.ellipse(x + w / 2, y + h / 2, w * 0.4, h * 0.3, 0.4, 0, TAU); g.fill(); used.pop(); break; }
+      case 'lift': { const p = place(3, 2); if (!p) break; const [x, y, w, h] = p; g.strokeStyle = '#c8b040'; g.lineWidth = 3; g.strokeRect(x + 4, y + 4, w - 8, h - 8); break; }
+    }
+  }
+  // clutter: papers, debris, blood
+  for (let n = 0; n < (b.w * b.h) / 18; n++) {
+    const x = (ix + R.i(iw)) * T2 - ox + R.i(24), y = (iy + R.i(ih)) * T2 - oy + R.i(24), k = R.f();
+    if (k < 0.45) { g.fillStyle = 'rgba(230,226,210,.75)'; g.save(); g.translate(x, y); g.rotate(R.r(0, 3)); g.fillRect(-4, -3, 8, 6); g.restore(); }
+    else if (k < 0.75) { g.fillStyle = 'rgba(60,50,40,.5)'; g.fillRect(x, y, 3 + R.i(4), 2 + R.i(3)); }
+    else if (k < 0.88) { g.fillStyle = 'rgba(100,10,10,.45)'; g.beginPath(); g.arc(x, y, 3 + R.f() * 5, 0, TAU); g.fill(); }
+  }
+}

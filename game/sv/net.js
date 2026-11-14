@@ -94,7 +94,7 @@ function encodeSnap(forPid) {
   const sendQ = NET.qv !== G.Q.v || G.tick % 150 === 0; NET.qv = G.Q.v;
   return {
     k: 's', t: G.tick, c: G.clock, d: G.day, ph: G.phase, n: G.nightN, wi: G.waveIdx || 0, o: G.over, mh: G.merchantHostile, vh: G.vh, w: G.warn, kl: G.kills,
-    mil: G.milHostile, q: sendQ ? G.Q : undefined, wx: G.weather ? [G.weather.k, r2(G.weather.i)] : 0, ev: (G.events || []).map(e => [e.k, r2(e.x), r2(e.y), e.label]), jb: G.jobs, H: G.hazards.map(h => [h.k === 'fire' ? 1 : 0, r2(h.x), r2(h.y), r2(h.r), r2(h.t)]),
+    mil: G.milHostile, q: sendQ ? G.Q : undefined, wx: G.weather ? [G.weather.k, r2(G.weather.i)] : 0, ev: (G.events || []).map(e => [e.k, r2(e.x), r2(e.y), e.label]), jb: G.tick % 30 === 0 ? G.jobs : undefined, H: G.hazards.map(h => [h.k === 'fire' ? 1 : 0, r2(h.x), r2(h.y), r2(h.r), r2(h.t)]),
     st: G.stash, sh: shops,
     P: G.players.map(p => p && { j: p.joined, x: r2(p.x) / 100, y: r2(p.y) / 100, a: r2(p.angle) / 100, hp: p.hp, hu: p.hunger, sta: p.stamina, w: p.wpn, m: p.mag,
                                  rl: p.reloadT, dn: p.down, dd: p.dead, dt: p.downT, up: p.useP, ul: p.useLabel, f: p.flash, ft: p.fireT, cr: p.in.crouch, mv: p.in.moving,

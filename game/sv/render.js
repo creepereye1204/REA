@@ -59,6 +59,8 @@ function chunkCanvas(cx, cy) {
     const tx = cx * CH + x, ty = cy * CH + y;
     if (inMap(tx, ty)) drawGround(g, tx, ty, x * TILE, y * TILE);
   }
+  const X0 = cx * CH, Y0 = cy * CH;
+  for (const b of W.buildings) if (b.x < X0 + CH && b.x + b.w > X0 && b.y < Y0 + CH && b.y + b.h > Y0) drawFurniture(g, b, X0 * TILE, Y0 * TILE);
   V.chunks.set(key, c);
   return c;
 }

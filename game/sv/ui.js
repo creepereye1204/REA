@@ -123,7 +123,7 @@ function drawHud(g) {
     drawMiniMap(g, mx2, myy, mmW, mmH, 1, mview);
     const here = placeName(p.x, p.y); txt(g, here, mx2 + mmW / 2, myy + mmH + 13, '#e8e0c8', 11, 'center');
     uiBtn(mx2, myy, mmW, mmH, () => { V.mapOpen = true; });
-    if (T_) drawQuestHud(g, 8, myy + mmH + 8, Math.min(250, VIEW_W * 0.42));
+    if (T_) drawQuestHud(g, 8, myy + mmH + 22, Math.min(250, VIEW_W * 0.42));
   }
   if (!T_) drawQuestHud(g, 8, 72 + (p.in && p.in.crouch ? 14 : 0), small ? 230 : 300);
 
