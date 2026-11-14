@@ -32,6 +32,27 @@ function panelBox(g, w, h, title) {
 
 // ── HUD ────────────────────────────────────────────────────────────────────
 const touchUI = () => I.touch;
+function drawCrosshair(g) {
+  const want = !I.touch && !anyModal() && !V.build ? 'none' : 'default';
+  if (canvas.style && canvas.style.cursor !== want) canvas.style.cursor = want;
+  if (want !== 'none' || !I.mouse) return;
+  const x = I.mx, y = I.my, me = meP(), w = me && WEAPONS[me.wpn], gap = 5 + (V.recoil || 0) * 0.9 + (w && w.spread ? w.spread * 60 : 0);
+  g.lineCap = 'round';
+  for (const [c, lw] of [['rgba(0,0,0,.7)', 4], ['#f4f4f4', 2]]) {
+    g.strokeStyle = c; g.lineWidth = lw; g.beginPath();
+    g.moveTo(x - gap - 7, y); g.lineTo(x - gap, y); g.moveTo(x + gap, y); g.lineTo(x + gap + 7, y);
+    g.moveTo(x, y - gap - 7); g.lineTo(x, y - gap); g.moveTo(x, y + gap); g.lineTo(x, y + gap + 7); g.stroke();
+  }
+  g.fillStyle = '#fff'; g.fillRect(x - 1, y - 1, 2, 2);
+  const h = V.hitMark;
+  if (V.saveT > 0) { V.saveT -= V.dt || 0.016; g.globalAlpha = Math.min(1, V.saveT); txt(g, '💾 자동 저장됨', 14, VIEW_H - 30, '#9fe6a0', 12); g.globalAlpha = 1; }
+  if (h) {
+    const k = 1 - h.t / 0.25, r = 7 + (1 - k) * 5 + (h.kill ? 4 : 0);
+    g.strokeStyle = h.kill ? `rgba(255,70,50,${k})` : h.c ? `rgba(255,214,60,${k})` : `rgba(255,255,255,${k})`; g.lineWidth = h.kill ? 3.5 : 2.5; g.beginPath();
+    for (const [a, b] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) { g.moveTo(x + a * r * 0.45, y + b * r * 0.45); g.lineTo(x + a * r, y + b * r); }
+    g.stroke();
+  }
+}
 function drawHud(g) {
   const p = meP(), S = G.stash, T_ = touchUI(), small = VIEW_W < 760;
   V.btns = [];
@@ -509,7 +530,8 @@ function bindInput() {
   }, { passive: false });
   const end = ev => { for (const t of ev.changedTouches) { if (t.identifier === I.useId) { I.useHeld = false; I.useId = null; } if (I.joy.id === t.identifier) Object.assign(I.joy, { id: null, x: 0, y: 0 }); if (I.aim.id === t.identifier) Object.assign(I.aim, { id: null, x: 0, y: 0, fire: false }); } };
   canvas.addEventListener('touchend', end); canvas.addEventListener('touchcancel', end);
-  document.addEventListener('visibilitychange', () => { if (document.hidden) { I.keys = {}; end({ changedTouches: [{ identifier: I.joy.id }, { identifier: I.aim.id }] }); if (G && NET.role === 'solo') V.paused = true; } });
+  addEventListener('pagehide', () => { if (G && NET.role !== 'client' && !G.over) saveGame(true); });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) { if (G && NET.role !== 'client' && !G.over) saveGame(true); I.keys = {}; end({ changedTouches: [{ identifier: I.joy.id }, { identifier: I.aim.id }] }); if (G && NET.role === 'solo') V.paused = true; } });
 }
 function cycleWeapon(d) {
   const owned = WEAPON_ORDER.filter(w => G.stash.owned[w]), p = meP();
@@ -632,7 +654,7 @@ const SFX = {
   swish: [600, 0.05, 'noise', 0.02], eat: [500, 0.1, 'triangle', 0.05], buy: [1300, 0.1, 'triangle', 0.06], click: [800, 0.02, 'square', 0.02],
   spit: [300, 0.12, 'sawtooth', 0.04], fireball: [180, 0.2, 'sawtooth', 0.05], scream: [900, 0.6, 'sawtooth', 0.06], thud: [90, 0.08, 'noise', 0.07],
   clang: [500, 0.1, 'square', 0.04], beep: [1800, 0.08, 'square', 0.04], alarm: [880, 0.5, 'square', 0.06], horn: [110, 1.2, 'sawtooth', 0.09], over: [220, 1.0, 'sawtooth', 0.08],
-  door: [70, 0.4, 'noise', 0.14], engine: [55, 0.9, 'sawtooth', 0.08], thunder: [40, 2.2, 'noise', 0.35],
+  door: [70, 0.4, 'noise', 0.14], hitm: [1900, 0.04, 'square', 0.035], critm: [2600, 0.07, 'square', 0.05], killm: [700, 0.14, 'triangle', 0.08], engine: [55, 0.9, 'sawtooth', 0.08], thunder: [40, 2.2, 'noise', 0.35],
 };
 function sfx(name, x, y) {
   if (!actx || sfxBudget > 8 || !(SFX[name] || name === 'groan' || name === 'heart')) return;

@@ -24,6 +24,7 @@ function saveGame(quiet) {
       fog: V.seen && V.fogSeed === W.seed ? Array.from(V.seen).join('') : null,
     };
     localStorage.setItem(SAVE_KEY, JSON.stringify(data));
+    V.saveT = 2.5;
     if (!quiet) say('게임을 저장했습니다', '#9fe6a0', V.me);
     return true;
   } catch (e) { if (!quiet) say('저장 실패: ' + e.message, '#ff9a8a', V.me); return false; }

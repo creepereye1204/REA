@@ -4,6 +4,7 @@
 function localMove(p, inp) {
   if (p.down || p.dead || G.over) { p.in.moving = false; return; }
   if (p.veh) return driveMove(p, inp);
+  if (p.ride !== undefined) { const d = G.players[p.ride]; if (d && d.veh) { p.x = d.x - Math.sin(d.veh.ang) * 0.35; p.y = d.y + Math.cos(d.veh.ang) * 0.35; } p.in.moving = false; return; }
   const sprint = inp.sprint && p.stamina > 4 && inp.moving;
   const sp = 4.4 * (sprint ? 1.55 : 1) * (inp.crouch ? 0.55 : 1) * groundSlow(p.x, p.y);
   if (inp.moving) { moveActor(p, inp.mx * sp * DT, inp.my * sp * DT); if (NET.role === 'client') p.walk += 0.25; }
@@ -12,18 +13,18 @@ function localMove(p, inp) {
 // arcade car handling: steer toward the stick, reverse when pointing backward, slower off-road
 function driveMove(p, inp) {
   const v = p.veh, cx = Math.floor(p.x), cy = Math.floor(p.y), onRoad = inMap(cx, cy) && (W.tile[idx(cx, cy)] === T.ROAD || W.tile[idx(cx, cy)] === T.CONCRETE || W.tile[idx(cx, cy)] === T.WALK);
-  const top = (inp.sprint ? 16 : 11.5) * (onRoad ? 1 : 0.62 * groundSlow(p.x, p.y));
+  // easy handling: the car turns toward wherever you push, slows into sharp turns, slides along walls
+  const top = (inp.sprint ? 15 : 11) * (onRoad ? 1 : 0.78 * groundSlow(p.x, p.y));
   if (inp.moving && v.fuel > 0) {
-    const want = Math.atan2(inp.my, inp.mx);
-    let da = angDiff(v.ang, want);
-    if (Math.abs(da) > 2.3 && v.spd < 2.5) { v.spd = Math.max(-4.5, v.spd - 10 * DT); da = angDiff(v.ang, want + Math.PI); }
-    else v.spd = Math.min(top, v.spd + (v.spd < 0 ? 18 : v.spd > top ? -6 : 7.5) * DT);
-    v.ang += clamp(da, -1, 1) * Math.min(1, Math.abs(v.spd) / 3.5) * 3.4 * DT * Math.sign(v.spd || 1);
-    v.fuel = Math.max(0, v.fuel - Math.abs(v.spd) * DT * 0.045);
-  } else v.spd *= 0.965;
+    const want = Math.atan2(inp.my, inp.mx), da = angDiff(v.ang, want);
+    v.ang += clamp(da, -1, 1) * 5.5 * DT;
+    const turnK = 1 - Math.min(0.6, Math.abs(da) / Math.PI);
+    v.spd += ((top * turnK) - v.spd) * Math.min(1, (v.spd < top * turnK ? 1.6 : 3) * DT);
+    v.fuel = Math.max(0, v.fuel - Math.abs(v.spd) * DT * 0.04);
+  } else v.spd *= 0.95;
   if (Math.abs(v.spd) < 0.05) v.spd = 0;
   const ok = moveActor(p, Math.cos(v.ang) * v.spd * DT, Math.sin(v.ang) * v.spd * DT);
-  if (!ok) { if (Math.abs(v.spd) > 5) { v.hp -= Math.abs(v.spd) * 2.5; V.shake = Math.max(V.shake, Math.abs(v.spd) * 0.6); sfx('thud', p.x, p.y); } v.spd *= -0.25; }
+  if (!ok) { if (Math.abs(v.spd) > 9) { v.hp -= Math.abs(v.spd) * 1.2; V.shake = Math.max(V.shake, Math.abs(v.spd) * 0.4); sfx('thud', p.x, p.y); } v.spd *= 0.6; }
   p.angle = v.ang; inp.moving = Math.abs(v.spd) > 0.3;
 }
 function step() {
@@ -113,6 +114,7 @@ let acc = 0, last = 0;
 function frame(ts) {
   const now = ts / 1000, dt = Math.min(0.1, now - (last || now)); last = now;
   acc += dt;
+  if (V.hitStop > 0 && NET.role === 'solo') { V.hitStop -= dt; acc = 0; } // freeze-frame on big kills
   let n = 0;
   // At most 3 catch-up steps per frame: on a slow device extra steps make the next frame
   // slower still (spiral of death), so past that we let the game run slightly slow instead.

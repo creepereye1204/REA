@@ -5,7 +5,7 @@ let canvas, ctx, VIEW_W = 960, VIEW_H = 640, RS = 1;
 const V = {
   me: 0, cam: { x: 0, y: 0 }, parts: [], tracers: [], floaters: [], msgs: [], panel: null, build: false, buildSel: 'wall_wood',
   shake: 0, hurt: 0, chunks: new Map(), roofA: [], mapOpen: false, aimX: 0, aimY: 0, frame: 0, lights: [], help: false, net: '',
-  mini: null, ghost: null, banner: null, comm: [], commT: 0, boss: null, ending: null,
+  mini: null, ghost: null, banner: null, comm: [], commT: 0, boss: null, ending: null, dmgNums: [], hitMark: null, hitStop: 0, recoil: 0,
 };
 
 // ── generated art (item icons, portraits, illustrations) ──────────────────
@@ -230,7 +230,23 @@ function applyFx(o) {
     case 'msg': if (o.pid === -1 || o.pid === undefined || o.pid === V.me) { V.msgs.push({ text: o.text, c: o.c, ttl: o.big ? 4.5 : 3, big: o.big }); if (V.msgs.length > 6) V.msgs.shift(); } break;
     case 'sfx': sfx(o.n, o.x, o.y); break;
     case 'tr': V.tracers.push({ ...o, t: 0, life: o.c === 2 ? 0.25 : 0.06 }); break;
-    case 'flash': V.parts.push({ k: 'flash', x: o.x, y: o.y, a: o.a, t: 0, life: 0.05 }); V.lights.push({ x: o.x, y: o.y, r: 3, t: 0.06, c: '255,200,120' });
+    case 'hit': {
+      const mine = o.pid === V.me;
+      // spray of blood in the shot direction
+      for (let k = 0; k < (o.kill ? 10 : 5) + (o.c ? 4 : 0); k++) { const a = o.a + rnd(-0.6, 0.6), sp = rnd(2, 6); V.parts.push({ k: 'drop', x: o.x, y: o.y, z: 0.7, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, vz: rnd(1, 3), c: k % 3 ? '#9a1010' : '#5a0808', t: 0, life: 0.7 }); }
+      decal(o.x + Math.cos(o.a) * 0.5, o.y + Math.sin(o.a) * 0.5, o.kill ? 0.45 : 0.25, '#5b0f0f', o.kill ? 6 : 3);
+      V.parts.push({ k: 'impact', x: o.x, y: o.y, t: 0, life: 0.14, c: o.c });
+      if (mine) {
+        V.dmgNums.push({ x: o.x + rnd(-0.2, 0.2), y: o.y, d: o.d, c: o.c, kill: o.kill, t: 0, vx: Math.cos(o.a) * 0.6 + rnd(-0.3, 0.3) });
+        V.hitMark = { t: 0, kill: o.kill, c: o.c };
+        sfx(o.kill ? 'killm' : o.c ? 'critm' : 'hitm');
+        if (o.kill) { V.shake = Math.max(V.shake, o.big ? 9 : 4); V.hitStop = o.big ? 0.09 : 0.04; V.parts.push({ k: 'killring', x: o.x, y: o.y, t: 0, life: 0.35 }); }
+        else if (o.c) V.shake = Math.max(V.shake, 3);
+      }
+      break;
+    }
+    case 'flash': V.parts.push({ k: 'flash', x: o.x, y: o.y, a: o.a, t: 0, life: 0.06, big: o.w === 'shotgun' || o.w === 'sniper' || o.w === 'launcher' });
+      if (o.pid === V.me) { const kick = { pistol: 2, smg: 1.6, rifle: 2.4, shotgun: 6, sniper: 8, launcher: 7 }[o.w] || 1.5; V.shake = Math.max(V.shake, kick); V.recoil = Math.min(14, (V.recoil || 0) + kick * 1.4); V.kickA = o.a; } V.lights.push({ x: o.x, y: o.y, r: 3, t: 0.06, c: '255,200,120' });
       if (V.parts.length < 400) V.parts.push({ k: 'shell', x: o.x, y: o.y, z: 0.5, vx: Math.cos(o.a + 1.6) * rnd(1.5, 3), vy: Math.sin(o.a + 1.6) * rnd(1.5, 3), vz: rnd(2, 3.5), t: 0, life: 1.2, rot: rnd(0, 6) });
       break;
     case 'lightning': V.flashT = 0.35; V.shake = Math.max(V.shake, 3); setTimeout(() => sfx('thunder'), 300 + Math.random() * 900); break;
@@ -296,7 +312,8 @@ function draw(dtReal) {
   if (!V.camInit) { V.cam.x = tx; V.cam.y = ty; V.camInit = true; }
   V.cam.x += (tx - V.cam.x) * 0.15; V.cam.y += (ty - V.cam.y) * 0.15;
   V.cam.x = clamp(V.cam.x, -TILE * 2, MW * TILE - VIEW_W + TILE * 2); V.cam.y = clamp(V.cam.y, -TILE * 2, MH * TILE - VIEW_H + TILE * 2);
-  const sx = Math.round(V.cam.x + rnd(-V.shake, V.shake)), sy = Math.round(V.cam.y + rnd(-V.shake, V.shake));
+  const kx = V.recoil ? -Math.cos(V.kickA || 0) * V.recoil : 0, ky = V.recoil ? -Math.sin(V.kickA || 0) * V.recoil : 0;
+  const sx = Math.round(V.cam.x + kx + rnd(-V.shake, V.shake)), sy = Math.round(V.cam.y + ky + rnd(-V.shake, V.shake));
   V.shake *= 0.85; if (V.shake < 0.3) V.shake = 0;
   g.save(); g.translate(-sx, -sy); g.scale(zoom, zoom);
 
@@ -388,6 +405,15 @@ function draw(dtReal) {
     g.font = 'bold 11px system-ui, sans-serif'; g.fillStyle = p.color; g.fillText(p.name, p.x * TILE, p.y * TILE - 46);
     if (p.down) { g.fillStyle = '#ff6b5c'; g.fillText(`쓰러짐 ${Math.ceil(p.downT)}s`, p.x * TILE, p.y * TILE - 58); }
   }
+  for (const n of V.dmgNums) {
+    const k = n.t / 0.9, pop = n.t < 0.08 ? 1 + (0.08 - n.t) * 12 : 1, size = (n.c ? 20 : n.kill ? 17 : 14) * pop;
+    g.globalAlpha = clamp((1 - k) * 2, 0, 1); g.font = `900 ${size | 0}px system-ui, sans-serif`; g.textAlign = 'center';
+    const px = (n.x + n.vx * n.t) * TILE, py = n.y * TILE - 34 - n.t * 46 + n.t * n.t * 30;
+    const s = (n.c ? '치명타 ' : '') + n.d;
+    g.lineWidth = 4; g.strokeStyle = 'rgba(0,0,0,.85)'; g.strokeText(s, px, py);
+    g.fillStyle = n.c ? '#ffd23a' : n.kill ? '#ff6a4a' : '#ffffff'; g.fillText(s, px, py);
+  }
+  g.globalAlpha = 1;
   for (const f of V.floaters) {
     g.globalAlpha = clamp(2 - f.t / f.life * 2, 0, 1); g.font = 'bold 12px system-ui, sans-serif';
     const fy = f.y * TILE - 30 - f.t * 20, fxx = f.x * TILE + (f.icon ? 10 : 0);
@@ -421,6 +447,7 @@ function draw(dtReal) {
   }
   drawHud(g);
   drawUI(g);
+  drawCrosshair(g);
   if (typeof updateAudio === 'function') updateAudio(V.dt);
   // advance local particles in real time
   const dt = Math.min(0.05, dtReal);
@@ -428,6 +455,9 @@ function draw(dtReal) {
   V.parts = V.parts.filter(p => p.t < p.life);
   for (const t of V.tracers) t.t += dt; V.tracers = V.tracers.filter(t => t.t < t.life);
   for (const f of V.floaters) f.t += dt; V.floaters = V.floaters.filter(f => f.t < f.life);
+  for (const n of V.dmgNums) n.t += dt; V.dmgNums = V.dmgNums.filter(n => n.t < 0.9); if (V.dmgNums.length > 40) V.dmgNums.splice(0, V.dmgNums.length - 40);
+  if (V.hitMark) { V.hitMark.t += dt; if (V.hitMark.t > 0.25) V.hitMark = null; }
+  V.recoil = (V.recoil || 0) * Math.pow(0.002, dt);
   for (const l of V.lights) l.t -= dt; V.lights = V.lights.filter(l => l.t > 0);
   for (const m of V.msgs) m.ttl -= dt; V.msgs = V.msgs.filter(m => m.ttl > 0);
   V.hurt = Math.max(0, V.hurt - dt * 2);
@@ -859,6 +889,7 @@ function drawHound(g, x, y, e) {
 }
 function bar(g, x, y, w, k, c) { const px = x * TILE - w / 2, py = y * TILE; g.fillStyle = '#000'; g.fillRect(px, py, w, 3); g.fillStyle = c; g.fillRect(px, py, w * clamp(k, 0, 1), 3); }
 function drawPlayer(g, p) {
+  if (p.ride !== undefined) { const d = G.players[p.ride]; if (d && d.veh) { const x = p.x * TILE, y = p.y * TILE - 8; g.strokeStyle = '#222'; g.lineWidth = 4; g.beginPath(); g.moveTo(x, y); g.lineTo(x + Math.cos(p.angle) * 16, y + Math.sin(p.angle) * 16); g.stroke(); g.fillStyle = p.color; g.beginPath(); g.arc(x, y, 5, 0, TAU); g.fill(); g.strokeStyle = 'rgba(0,0,0,.6)'; g.lineWidth = 1; g.stroke(); return; } }
   if (p.veh) { drawCar(g, p.x * TILE, p.y * TILE, p.veh.ang, p.veh.color, { lights: G.phase !== 'day', brake: p.veh.spd < 1, driver: p.color }); return; }
   const gl = GUN_LOOK[p.wpn];
   const swing = p.wpn === 'machete' && p.fireT > 0.2;
@@ -900,7 +931,10 @@ function drawEntLabel(g, e) {
 function drawPart(g, p) {
   const k = p.t / p.life, x = p.x * TILE, y = p.y * TILE;
   switch (p.k) {
-    case 'flash': g.fillStyle = '#fff6b0'; g.beginPath(); g.arc(x + Math.cos(p.a) * 6, y - 14 + Math.sin(p.a) * 4, 7, 0, TAU); g.fill(); break;
+    case 'flash': { const r = p.big ? 13 : 8, fx2 = x + Math.cos(p.a) * 10, fy2 = y - 14 + Math.sin(p.a) * 6;
+      g.fillStyle = 'rgba(255,200,90,.55)'; g.beginPath(); g.arc(fx2, fy2, r * 1.6, 0, TAU); g.fill();
+      g.fillStyle = '#fff6b0'; g.beginPath(); g.moveTo(fx2 + Math.cos(p.a) * r * 2.2, fy2 + Math.sin(p.a) * r * 2.2); g.lineTo(fx2 + Math.cos(p.a + 1.6) * r * 0.7, fy2 + Math.sin(p.a + 1.6) * r * 0.7); g.lineTo(fx2 + Math.cos(p.a - 1.6) * r * 0.7, fy2 + Math.sin(p.a - 1.6) * r * 0.7); g.fill();
+      g.fillStyle = '#fff'; g.beginPath(); g.arc(fx2, fy2, r * 0.5, 0, TAU); g.fill(); break; }
     case 'drop': case 'chunk': g.fillStyle = p.c; const s = p.k === 'chunk' ? 5 : 3; g.fillRect(x - s / 2, y - p.z * TILE - s / 2, s, s); break;
     case 'boom': {
       const r = p.r * TILE * (0.35 + 0.65 * k);
@@ -912,6 +946,8 @@ function drawPart(g, p) {
     case 'smoke': g.fillStyle = `rgba(90,90,90,${0.35 * (1 - k)})`; g.beginPath(); g.arc(x, y - 14 - k * 20, (p.s || 6) * (0.5 + k), 0, TAU); g.fill(); break;
     case 'spark': g.fillStyle = `rgba(255,220,150,${1 - k})`; g.fillRect(x - 2, y - 16, 4, 4); break;
     case 'swing': g.strokeStyle = `rgba(255,255,255,${0.7 * (1 - k)})`; g.lineWidth = 3; g.beginPath(); g.arc(x, y - 16, 26, p.a - 0.9, p.a + 0.9); g.stroke(); break;
+    case 'impact': { const r = 6 + k * 14; g.strokeStyle = p.c ? `rgba(255,220,80,${1 - k})` : `rgba(255,255,255,${0.9 * (1 - k)})`; g.lineWidth = 2.5; g.beginPath(); for (let i = 0; i < 4; i++) { const a = i * Math.PI / 2 + 0.78; g.moveTo(x + Math.cos(a) * r * 0.4, y - 16 + Math.sin(a) * r * 0.4); g.lineTo(x + Math.cos(a) * r, y - 16 + Math.sin(a) * r); } g.stroke(); break; }
+    case 'killring': g.strokeStyle = `rgba(255,80,60,${0.8 * (1 - k)})`; g.lineWidth = 3; g.beginPath(); g.arc(x, y - 14, 10 + k * 34, 0, TAU); g.stroke(); break;
     case 'shell': { g.save(); g.translate(x, y - p.z * TILE); g.rotate(p.rot + p.t * 12 * (p.z > 0 ? 1 : 0)); g.fillStyle = '#d8b040'; g.fillRect(-2, -1, 4, 2); g.restore(); break; }
     case 'redsmoke': g.fillStyle = `rgba(210,60,50,${0.38 * (1 - k)})`; g.beginPath(); g.arc(x + p.vx0 * p.t * 40 + Math.sin(p.t * 2) * 6, y - 14 - p.t * 46, p.s * (0.6 + k * 1.6), 0, TAU); g.fill(); break;
     case 'ember': g.fillStyle = `rgba(255,${160 + (p.t * 80 | 0)},60,${1 - k})`; g.fillRect(x + Math.sin(p.t * 5) * 4 + p.vx0 * p.t * 30, y - 14 - p.t * 40, 2, 2); break;

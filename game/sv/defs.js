@@ -106,6 +106,8 @@ const HUMANS = {
 };
 const FACTION_NAMES = { bandit: '약탈단', village: '마을', merchant: '상인', military: '잔존군', cult: '붉은 새벽 교단', zombie: '좀비', player: '아군' };
 const SURVIVOR_NAMES = ['민준', '서연', '지호', '하은', '도윤', '수아', '예준', '지우', '시우', '하린', '주원', '윤서', '현우', '채원', '건우', '다은', '우진', '소율'];
+// difficulty trim: zombies a little softer than the table above
+for (const k in MOBS) { MOBS[k].hp = Math.round(MOBS[k].hp * 0.88); MOBS[k].dmg = Math.round(MOBS[k].dmg * 0.9); }
 const PERKS = {
   guard:     { name: '사수',     desc: '명중률·피해 +40%' },
   mechanic:  { name: '정비공',   desc: '낮에 기지 구조물 자동 수리' },

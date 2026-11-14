@@ -64,7 +64,7 @@ function newEnt(o) { o.id = G.nextId++; o.flash = 0; o.walk = 0; o.vx = 0; o.vy 
 
 function spawnMob(kind, x, y, wave, o = {}) {
   const d = MOBS[kind];
-  const hpMul = d.boss ? 1 + Math.max(0, G.day - 1) * 0.05 : 1 + Math.max(0, G.day - 1) * 0.09;
+  const hpMul = d.boss ? 1 + Math.max(0, G.day - 1) * 0.04 : 1 + Math.max(0, G.day - 1) * 0.07;
   return newEnt({ cat: 'mob', kind, def: d, team: 'zombie', x, y, r: d.r, angle: SR.r(0, TAU), hp: d.hp * hpMul, maxHp: d.hp * hpMul,
                   speed: d.speed * SR.r(0.9, 1.1), state: 'wander', target: null, seenT: -99, atkT: 0, spitT: SR.r(0, 2), wave: !!wave,
                   wanderT: 0, wx: 0, wy: 0, stuckT: 0, invest: null, screamed: false, tag: o.tag || null, home: o.home || null, skillT: SR.r(2, 4), dashT: 0 });
@@ -151,7 +151,7 @@ function destroyStruct(s) {
 function canPlace(type, cell) {
   if (cell < 0 || cell >= MW * MH) return false;
   const x = cellX(cell), y = cellY(cell);
-  if (type !== 'campfire' && dist(x + 0.5, y + 0.5, G.core.x, G.core.y) > BUILD_RADIUS && !G.structs.some(s => s.type === 'campfire' && dist(s.x, s.y, x + 0.5, y + 0.5) <= OUTPOST_RADIUS)) return false;
+  if (type !== 'campfire' && type !== 'turret' && dist(x + 0.5, y + 0.5, G.core.x, G.core.y) > BUILD_RADIUS && !G.structs.some(s => s.type === 'campfire' && dist(s.x, s.y, x + 0.5, y + 0.5) <= OUTPOST_RADIUS)) return false;
   if (type === 'campfire' && G.structs.some(s => s.type === 'campfire' && dist(s.x, s.y, x + 0.5, y + 0.5) < 20)) return false;
   if (W.mb[cell] & (MB_TERRAIN | MB_OBJ)) return false;
   if (W.structAt[cell] || W.tile[cell] === T.WATER) return false;
@@ -252,6 +252,7 @@ function damage(e, dmg, src, kx = 0, ky = 0) {
     if (src && src.team === 'player') dmg *= 0.5;
     if (e.adrT > 0) dmg *= 0.8;
     if (e.veh) { e.veh.hp -= dmg * 0.7; dmg *= 0.3; if (e.veh.hp <= 0) wreckCar(e); }
+    else if (e.ride !== undefined) dmg *= 0.5;
     if (e.armor > 0) { const a = Math.min(e.armor, dmg * 0.5); e.armor -= a; dmg -= a; if (e.armor <= 0) { e.armor = 0; say('방탄조끼가 망가졌습니다', '#ffb36b', e.pid); autoArmor(e); } }
     e.hp -= dmg; e.flash = 5;
     fx({ k: 'hurt', pid: e.pid, x: e.x, y: e.y });
@@ -263,8 +264,11 @@ function damage(e, dmg, src, kx = 0, ky = 0) {
     dmg *= 0.2; if (SR.chance(0.5)) fx({ k: 'spark', x: e.x + Math.cos(e.angle) * 0.4, y: e.y + Math.sin(e.angle) * 0.4 });
   }
   if (e.def.stealth) e.revealT = 3;
-  e.hp -= dmg; e.flash = 4;
-  const kb = (e.def.heavy ? 0.15 : 1) * Math.min(0.25, dmg / 260);
+  let crit = false;
+  if (src && src.cat === 'player' && SR.chance(0.12)) { dmg *= 1.8; crit = true; }
+  e.hp -= dmg; e.flash = 5;
+  if (src && src.cat === 'player') { e.hitAcc = (e.hitAcc || 0) + dmg; e.hitBy = src.pid; e.hitCrit = e.hitCrit || crit; e.hitDir = Math.atan2(ky, kx); }
+  const kb = (e.def.heavy ? 0.2 : 1) * Math.min(0.4, dmg / 140);
   e.vx += kx * kb; e.vy += ky * kb;
   if (SR.chance(0.5)) fx({ k: 'blood', x: e.x, y: e.y, z: e.cat === 'mob' ? 1 : 0 });
   if (src && src.team === 'player') {
@@ -401,7 +405,7 @@ function fireGun(sh, wid, a, opt = {}) {
       hitscan(sh, mx, my, aa, w.range * (n > 1 ? SR.r(0.75, 1) : 1), dmg, w.pierce || 1, wid === 'sniper' ? 2 : 0);
     }
   }
-  fx({ k: 'flash', x: +mx.toFixed(2), y: +my.toFixed(2), a: +a.toFixed(2) });
+  fx({ k: 'flash', x: +mx.toFixed(2), y: +my.toFixed(2), a: +a.toFixed(2), pid: sh.cat === 'player' ? sh.pid : -1, w: wid });
   sfxAt(wid, sh.x, sh.y);
   makeNoise(sh.x, sh.y, w.noise * (sh.in && sh.in.crouch ? 0.7 : 1), sh);
 }
@@ -471,6 +475,12 @@ function updatePlayer(p) {
   p.angle = Math.atan2(p.in.ay, p.in.ax) || p.angle;
 
   if (p.veh) { updateDriving(p); p.prevFire = p.in.fire; p.useT = 0; p.useP = 0; return; }
+  if (p.ride !== undefined) { // passenger: rides along, can shoot, [E] to get out
+    const d = G.players[p.ride];
+    if (!d || !d.veh || d.dead) leaveSeat(p);
+    else { p.x = d.x - Math.sin(d.veh.ang) * 0.35; p.y = d.y + Math.cos(d.veh.ang) * 0.35; if (p.in.use && !p.useLatch) { p.useLatch = true; leaveSeat(p); } }
+    if (!p.in.use) p.useLatch = false;
+  }
   // weapon
   const wid = p.wpn, w = WEAPONS[wid];
   if (p.fireT > 0) p.fireT -= DT;
@@ -527,7 +537,7 @@ function finishReload(p) {
 
 // ── interaction (shared by host and guest so both see the same prompt) ──────
 function findInteract(p, S, onlyInstant) {
-  if (!p || p.down || p.dead || p.veh) return null;
+  if (!p || p.down || p.dead || p.veh || p.ride !== undefined) return null;
   let best = null, bs = 1e9;
   const consider = (o, d) => {
     if (onlyInstant && !o.instant) return;
@@ -535,6 +545,7 @@ function findInteract(p, S, onlyInstant) {
     if (s < bs) { bs = s; best = o; }
   };
   for (const q of S.players) if (q && q !== p && q.down && !q.dead) { const d = dist(p.x, p.y, q.x, q.y); if (d < 1.6) consider({ key: 'rev' + q.pid, kind: 'revive', q, x: q.x, y: q.y, time: 3, label: `${q.name} 살리는 중` }, d - 1); }
+  for (const q of S.players) if (q && q !== p && q.veh && !q.dead && !S.players.some(o => o && o.ride === q.pid)) { const d = dist(p.x, p.y, q.x, q.y); if (d < 2.4) consider({ key: 'ride' + q.pid, kind: 'ride', q, x: q.x, y: q.y, instant: true, label: `${q.name}의 차량 조수석 타기 (타고 사격 가능)` }, d - 1); }
   for (const b of S.drops) { const d = dist(p.x, p.y, b.x, b.y); if (d < 1.3) consider({ key: 'd' + b.id, kind: 'drop', b, x: b.x, y: b.y, instant: true, label: `줍기${b.from ? ' — ' + b.from + '의 소지품' : ''}` }, d - 0.5); }
   for (const e of S.ents) {
     if (e.dead) continue;
@@ -600,6 +611,7 @@ const villageEmpty = (S, v) => !S.ents.some(e => !e.dead && e.team === 'village'
 function interactTap(p) {
   const it = findInteract(p, G, true);
   if (!it || !it.instant) return;
+  if (it.kind === 'ride') { p.ride = it.q.pid; p.r = 0.2; say(`${p.name}: 조수석 탑승 — 사격 가능, [E] 내리기`, '#cfe8ff', -1); sfxAt('door', p.x, p.y); return; }
   if (it.kind === 'drop') {
     const b = it.b;
     for (const k in b.items) giveItem(k, b.items[k], p.pid, b.x, b.y - 0.3 * Object.keys(b.items).indexOf(k));
@@ -642,6 +654,7 @@ function exitCar(p, force) {
     for (const k of c.cells) { W.contAt[k] = c; updateCellMB(k); }
     flowBaseDirty = true;
     p.veh = null; p.r = 0.3; p.x = sp[0]; p.y = sp[1];
+    for (const q of G.players) if (q && q.ride === p.pid) leaveSeat(q);
     fx({ k: 'contmove', id: c.id, cells: c.cells, x: c.x, y: c.y, horiz, fuel: c.fuel });
     fx({ k: 'tp', pid: p.pid, x: p.x, y: p.y });
     return true;
@@ -650,7 +663,14 @@ function exitCar(p, force) {
   say('여기서는 내릴 수 없습니다 — 넓은 곳에 세우세요', '#ff9a8a', p.pid);
   return false;
 }
+function leaveSeat(p) {
+  const d = G.players[p.ride]; p.ride = undefined; p.r = 0.3;
+  const base = d || p;
+  for (const [ox, oy] of [[0, 1.2], [0, -1.2], [1.2, 0], [-1.2, 0], [1.2, 1.2], [-1.2, -1.2]]) { const x = base.x + ox, y = base.y + oy; if (!blockedAt(x, y, 'player')) { p.x = x; p.y = y; break; } }
+  fx({ k: 'tp', pid: p.pid, x: p.x, y: p.y });
+}
 function wreckCar(p) {
+  for (const q of G.players) if (q && q.ride === p.pid) leaveSeat(q);
   const v = p.veh; p.veh = null; p.r = 0.3;
   say('차량이 폭발합니다!', '#ff5c4c', -1, 1);
   explode(p.x, p.y, 70, 2.6, null);
@@ -699,7 +719,7 @@ function lootTension(p, it) {
     const r = SR.f();
     c.ev = null;
     if (c.village >= 0) { if (it.steal && b && r < 0.4) c.ev = { k: 'owner', at: SR.r(0.2, 0.55), b }; }
-    else if (b) { if (r < 0.12) c.ev = { k: 'closet', at: SR.r(0.3, 0.8) }; else if (r < 0.42 + dark + lvl) c.ev = { k: 'breakin', at: SR.r(0.15, 0.5), b }; }
+    else if (b) { if (r < 0.12) c.ev = { k: 'closet', at: SR.r(0.3, 0.8) }; else if (r < 0.34 + dark + lvl) c.ev = { k: 'breakin', at: SR.r(0.15, 0.5), b }; }
     else if (c.kind === 'car') { if (r < 0.22 + lvl) c.ev = { k: 'alarm', at: SR.r(0.1, 0.6) }; }
     else if (r < 0.2 + dark) c.ev = { k: 'pack', at: SR.r(0.2, 0.6) };
   }
@@ -1415,7 +1435,7 @@ function updateClock() {
 }
 function startNight() {
   const n = ++G.nightN;
-  const total = Math.min(260, Math.round((20 + 12 * n + 2.2 * n * n) * (G.Q && G.Q.lines.cure === 'c6' ? 1.35 : 1)));
+  const total = Math.min(230, Math.round((17 + 10 * n + 1.9 * n * n) * (G.Q && G.Q.lines.cure === 'c6' ? 1.35 : 1)));
   const kinds = Object.keys(MOBS).filter(k => MOBS[k].minNight <= n);
   const dirs = [0, 1, 2, 3].sort(() => SR.f() - 0.5).slice(0, n >= 5 ? 3 : n >= 2 ? 2 : 1);
   const offs = [0.4, 2.0, 3.8, 5.6, 7.0]; // game hours after 20:00
@@ -1638,7 +1658,7 @@ function ambientSpawns() {
     }
   }
   const dark = G.phase === 'night' || G.phase === 'dusk' || G.phase === 'dawn';
-  const cap = Math.min(80, 26 + G.day * 4) * (dark ? 1.5 : 1) / Math.max(1, ps.length * 0.75);
+  const cap = Math.min(70, 22 + G.day * 3.5) * (dark ? 1.4 : 1) / Math.max(1, ps.length * 0.75);
   for (const p of ps) {
     let n = 0;
     for (const e of G.ents) if (e.cat === 'mob' && !e.home && !e.wave && Math.abs(e.x - p.x) < 50 && Math.abs(e.y - p.y) < 50) n++;
@@ -1746,6 +1766,8 @@ function simTick() {
   if (lodPass) for (const e of G.ents) if (e.def.boss && e.def.por && !G.Q.seenBoss.includes(e.kind) && G.players.some(p => p && p.joined && !p.dead && dist(p.x, p.y, e.x, e.y) < 13)) {
     G.Q.seenBoss.push(e.kind); fx({ k: 'boss', por: e.def.por, name: e.title || e.def.name }); sfxAt('horn', e.x, e.y); qBump();
   }
+  // hit feedback: one number per target per tick (so shotgun pellets add up)
+  for (const e of G.ents) if (e.hitAcc) { fx({ k: 'hit', x: +e.x.toFixed(2), y: +e.y.toFixed(2), d: Math.round(e.hitAcc), pid: e.hitBy, c: e.hitCrit ? 1 : 0, kill: e.dead ? 1 : 0, a: +(e.hitDir || 0).toFixed(2), big: e.def.boss || e.def.heavy ? 1 : 0 }); e.hitAcc = 0; e.hitCrit = false; }
   if (G.ents.some(e => e.dead || e.frozen)) G.ents = G.ents.filter(e => !e.dead && !e.frozen);
   for (const d of G.drops) d.ttl--;
   if (G.tick % 50 === 0) G.drops = G.drops.filter(d => d.ttl > 0);
