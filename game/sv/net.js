@@ -51,7 +51,7 @@ async function hostOpen() {
         const p = G.players[1] || addPlayer(1);
         p.joined = true; if (p.dead) { p.dead = false; p.hp = 50; }
         p.x = G.players[0].x + 1; p.y = G.players[0].y;
-        conn.send({ k: 'init', seed: G.seed, pid: 1, tiles: G.tileDiff, looted: W.conts.filter(c => c.looted).map(c => c.id) });
+        conn.send({ k: 'init', seed: G.seed, pid: 1, tiles: G.tileDiff, extra: W.conts.slice(W.nConts0).map(c => [c.kind, Math.floor(c.x), Math.floor(c.y)]), looted: W.conts.filter(c => c.looted).map(c => c.id) });
         say('친구(P2)가 참가했습니다!', '#7dff9a', -1, 1);
         V.net = `방 코드: ${NET.code} — P2 연결됨`;
       });
@@ -94,7 +94,7 @@ function encodeSnap(forPid) {
   const sendQ = NET.qv !== G.Q.v || G.tick % 150 === 0; NET.qv = G.Q.v;
   return {
     k: 's', t: G.tick, c: G.clock, d: G.day, ph: G.phase, n: G.nightN, wi: G.waveIdx || 0, o: G.over, mh: G.merchantHostile, vh: G.vh, w: G.warn, kl: G.kills,
-    mil: G.milHostile, q: sendQ ? G.Q : undefined, wx: G.weather ? [G.weather.k, r2(G.weather.i)] : 0, H: G.hazards.map(h => [h.k === 'fire' ? 1 : 0, r2(h.x), r2(h.y), r2(h.r), r2(h.t)]),
+    mil: G.milHostile, q: sendQ ? G.Q : undefined, wx: G.weather ? [G.weather.k, r2(G.weather.i)] : 0, ev: (G.events || []).map(e => [e.k, r2(e.x), r2(e.y), e.label]), jb: G.jobs, H: G.hazards.map(h => [h.k === 'fire' ? 1 : 0, r2(h.x), r2(h.y), r2(h.r), r2(h.t)]),
     st: G.stash, sh: shops,
     P: G.players.map(p => p && { j: p.joined, x: r2(p.x) / 100, y: r2(p.y) / 100, a: r2(p.angle) / 100, hp: p.hp, hu: p.hunger, sta: p.stamina, w: p.wpn, m: p.mag,
                                  rl: p.reloadT, dn: p.down, dd: p.dead, dt: p.downT, up: p.useP, ul: p.useLabel, f: p.flash, ft: p.fireT, cr: p.in.crouch, mv: p.in.moving,
@@ -133,12 +133,13 @@ async function joinRoom(code) {
 function clientInit(d) {
   genWorld(d.seed);
   for (const i in d.tiles) { W.tile[+i] = d.tiles[i]; }
+  for (const [k, x, y] of d.extra || []) W.addCont(k, x, y, -1);
   for (const id of d.looted) if (W.conts[id]) W.conts[id].looted = true;
   rebuildMoveGrid();
   G = { seed: d.seed, t: 0, tick: 0, clock: 420, day: 1, phase: 'day', players: [], ents: [], structs: [], drops: [], shots: [], booms: [],
         stash: { cash: 0, wood: 0, scrap: 0, food: 0, meds: 0, grenade: 0, mine: 0, mags: {}, owned: { machete: 1, pistol: 1 }, upg: {} },
         vh: W.villages.map(() => 0), merchantHostile: false, kills: 0, over: null, nextId: 1, fxOut: [], core: null, bench: null, tileDiff: {},
-        hazards: [], milHostile: false, Q: newQuestState() };
+        hazards: [], milHostile: false, Q: newQuestState(), frozen: [], events: [] };
   V.me = d.pid;
   G.players[0] = makePlayer(0);
   G.players[1] = makePlayer(1);
@@ -150,6 +151,8 @@ function clientSnap(s) {
   G.tick = s.t; G.clock = s.c; G.day = s.d; G.phase = s.ph; G.nightN = s.n; G.waveIdx = s.wi; G.merchantHostile = s.mh; G.vh = s.vh; G.warn = s.w; G.kills = s.kl;
   G.milHostile = s.mil; if (s.q) G.Q = s.q;
   if (s.wx) G.weather = { k: s.wx[0], i: s.wx[1] / 100 };
+  if (s.jb) G.jobs = s.jb;
+  G.events = (s.ev || []).map(([k, x, y, label]) => ({ k, x: x / 100, y: y / 100, label }));
   G.hazards = s.H.map(([f, x, y, r, t]) => ({ k: f ? 'fire' : 'gas', x: x / 100, y: y / 100, r: r / 100, t: t / 100 }));
   if (s.o && !G.over) { G.over = s.o; }
   G.stash = s.st;

@@ -100,6 +100,8 @@ function drawQuestHud(g, x, y, w) {
     txt(g, pr, x + 18, yy + 15, '#bbb', small ? 10 : 11, 'left', false);
   });
   uiBtn(x, y, w, 10 + ids.length * 34, () => { V.panel = { k: 'journal', tab: 0 }; });
+  const jobs = (G.jobs || []).filter(j => j.taken && !j.done).slice(0, 2);
+  jobs.forEach((j, k) => { const yy = y + 18 + ids.length * 34 + k * 16; txt(g, (jobReady(j) ? '✔ ' : '· ') + jobText(j), x + 8, yy, jobReady(j) ? '#9fe6a0' : '#c8b8e8', small ? 10 : 11, 'left', false); });
   // defence bar
   const ev = G.Q.ev;
   if (ev) {

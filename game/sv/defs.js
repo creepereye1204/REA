@@ -189,6 +189,7 @@ const CONTAINERS = {
   pump:     { name: '주유기', color: '#c83a2a', time: 2.2, loot: [['fuel', 1, 3, 1]] },
   barn:     { name: '헛간 곳간', color: '#8a4a2a', time: 1.4, loot: [['food', 2, 6, 6], ['wood', 3, 8, 3], ['fuel', 1, 1, 1]] },
   desk:     { name: '책상', color: '#6a5040', time: 0.9, loot: [['parts', 1, 2, 3], ['cash', 3, 15, 3], ['watch', 1, 1, 1], ['bandage', 1, 2, 2]] },
+  airdrop:  { name: '보급품 상자', color: '#4a6a8a', time: 2.6, loot: [['wpn:rifle', 1, 1, 2], ['wpn:sniper', 1, 1, 1], ['wpn:launcher', 1, 1, 1], ['mag:rifle', 2, 4, 5], ['mag:sniper', 1, 3, 3], ['mag:launcher', 1, 2, 2], ['armor', 1, 1, 4], ['adrenaline', 1, 2, 3], ['meds', 2, 4, 4], ['grenade', 2, 4, 4], ['fuel', 1, 3, 2], ['food', 3, 6, 3]] },
   toolbox:  { name: '공구함', color: '#b84a2a', time: 1.2, loot: [['parts', 1, 3, 4], ['scrap', 3, 8, 4], ['fuel', 1, 1, 1]] },
 };
 

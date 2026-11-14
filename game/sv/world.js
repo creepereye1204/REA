@@ -572,6 +572,7 @@ function genWorld(seed) {
     if (!SOFT[t] || res[idx(x, y)] || dist(x, y, cx, cy) < 20) continue;
     if (addCont(R.chance(0.3) ? 'ammobox' : 'crate', x, y, -1)) k++;
   }
+  W.nConts0 = W.conts.length; // containers added later (air drops) are saved separately
   rebuildMoveGrid();
   return W;
 }

@@ -17,6 +17,7 @@ function saveGame(quiet) {
       v: 2, t: Date.now(), seed: G.seed, G: g,
       ents: everyone().filter(e => !e.dead && !(e.cat === 'mob' && !e.home && !e.tag)).map(ent),
       structs: G.structs.map(s => ({ id: s.id, type: s.type, cells: s.cells, hp: s.hp, ammo: s.ammo, angle: s.angle })),
+      extra: W.conts.slice(W.nConts0).map(c => ({ kind: c.kind, x: Math.floor(c.x), y: Math.floor(c.y) })),
       looted: W.conts.filter(c => c.looted).map(c => c.id),
       cars: W.conts.filter(c => c.kind === 'car' && (c.gone || c.fuel !== undefined)).map(c => ({ id: c.id, cells: c.cells, x: c.x, y: c.y, horiz: c.horiz, fuel: c.fuel, hp: c.hp, gone: !!c.gone })),
       players: G.players.map(p => p && { x: p.x, y: p.y, hp: p.hp, hunger: p.hunger, stamina: p.stamina, wpn: p.wpn, mag: p.mag, armor: p.armor || 0, angle: p.angle, veh: p.veh || null, r: p.r }),
@@ -33,6 +34,7 @@ function loadGame() {
   genWorld(d.seed);
   G = Object.assign({ players: [], ents: [], frozen: [], structs: [], fxOut: [], booms: [], shots: [], drops: [], hazards: [] }, d.G);
   for (const k in G.tileDiff) { const i = +k; W.tile[i] = G.tileDiff[k]; }
+  for (const c of d.extra || []) W.addCont(c.kind, c.x, c.y, -1);
   for (const id of d.looted) if (W.conts[id]) W.conts[id].looted = true;
   for (const q of d.cars || []) {
     const c = W.conts[q.id]; if (!c) continue;

@@ -18,7 +18,7 @@ function newGame(seed) {
     seed, t: 0, tick: 0, clock: 7 * 60, day: 1, phase: 'day', players: [], ents: [], structs: [], drops: [], shots: [], booms: [],
     stash: { cash: 80, wood: 40, scrap: 20, food: 6, meds: 2, grenade: 2, mine: 1, mags: { pistol: [12, 12, 12] }, owned: { machete: 1, pistol: 1 }, upg: {} },
     vh: W.villages.map(() => 0), merchantHostile: false, kills: 0, over: null, nextId: 1, waves: [], spawnQ: [], warn: null,
-    raidAt: -1, fxOut: [], tileDiff: {}, core: null, bench: null, nightN: 0, lootLog: 0, hazards: [], milHostile: false, Q: newQuestState(), frozen: [], away: null, weather: { k: 'clear', i: 0, to: 0, t: 300 },
+    raidAt: -1, fxOut: [], tileDiff: {}, core: null, bench: null, nightN: 0, lootLog: 0, hazards: [], milHostile: false, Q: newQuestState(), frozen: [], away: null, events: [], evDay: 0, jobs: [], weather: { k: 'clear', i: 0, to: 0, t: 300 },
   };
   const b = W.base;
   // core (2×2) + workbench
@@ -43,6 +43,7 @@ function newGame(seed) {
   activation(true);
   G.players = [];
   startQuest('m1', true);
+  postJobs();
   return G;
 }
 
@@ -304,6 +305,7 @@ function kill(e, src) {
     if (e.def.boss && e.tag && e.tag.startsWith('camp')) say(`${e.title} 처치!`, '#ffd166', -1, 1);
   }
   questOnKill(e, src);
+  jobsOnKill(e, src);
 }
 function addHazard(k, x, y, r, t, dps, team) { G.hazards.push({ k, x, y, r, t, dps, team }); if (G.hazards.length > 40) G.hazards.shift(); }
 function updateHazards() {
@@ -586,6 +588,7 @@ function findInteract(p, S, onlyInstant) {
       else if (s.hp < s.maxHp) consider({ key: 'rp' + s.id, kind: 'repair', s, x: s.x, y: s.y, time: 0.6, label: `${s.def.name} 수리 (${s.type === 'core' ? '고철 5' : s.type === 'wall_metal' || s.type === 'turret' ? '고철 2' : '목재 2'})` }, d + 0.3);
     }
   }
+  if (!onlyInstant) for (const v of W.villages) { const bp = boardPos(v), d = dist(p.x, p.y, bp.x, bp.y); if (d < 1.6 && !(S.vh[v.id] > 0)) consider({ key: 'board' + v.id, kind: 'board', v: v.id, x: bp.x, y: bp.y, ui: 'jobs', label: '의뢰 게시판 보기' }, d); }
   if (S.Q && !onlyInstant) for (const tr of W.triggers) {
     const d = dist(p.x, p.y, tr.x, tr.y); if (d > 1.6) continue;
     const label = triggerLabel(tr); if (label) consider({ key: 'tr' + tr.id, kind: 'trigger', tr, x: tr.x, y: tr.y, time: 1.5, label }, d);
@@ -607,7 +610,7 @@ function interactTap(p) {
     say(`${e.title || e.def.name}: 고마워요! 따라갈게요.`, '#7dff9a', -1, 1); sfxAt('unlock', e.x, e.y);
   } else if (it.kind === 'survivor') {
     const e = it.e, nm = SURVIVOR_NAMES[e.name];
-    if (e.mode === 'wait') { e.mode = 'follow'; e.follow = p.pid; say(`${nm}(${PERKS[e.perk].name}) 합류! ${PERKS[e.perk].desc}`, '#7dff9a', -1, 1); sfxAt('unlock', e.x, e.y); }
+    if (e.mode === 'wait') { if (e.sos) { for (const ev of G.events || []) if (ev.ent === e.id) ev.done = true; e.sos = false; G.stash.cash += 40; say('구조 성공! 사례금 $40', '#ffd166', p.pid); } e.mode = 'follow'; e.follow = p.pid; say(`${nm}(${PERKS[e.perk].name}) 합류! ${PERKS[e.perk].desc}`, '#7dff9a', -1, 1); sfxAt('unlock', e.x, e.y); }
     else if (e.mode === 'follow') { e.mode = 'guard'; e.home = { x: e.x, y: e.y }; say(`${nm}: 여기를 지키겠습니다.`, '#cfe8ff', p.pid); }
     else { e.mode = 'follow'; e.follow = p.pid; say(`${nm}: 따라가겠습니다.`, '#cfe8ff', p.pid); }
   }
@@ -878,6 +881,7 @@ function doCmd(pid, c) {
       sfxAt('throw', p.x, p.y);
       break;
     }
+    case 'job': jobCmd(p, c); break;
     case 'build': {
       const def = STRUCTS[c.t]; if (!def) break;
       if (!canPlace(c.t, c.cell)) { say('여기에는 지을 수 없습니다', '#ff9a8a', pid); break; }
@@ -1040,6 +1044,7 @@ function updateMob(e) {
     if (r.lost && e.wave) { stepToward(e, G.core.x, G.core.y, sp); return; }
     if (!r.lost && !r.arrived) return;
   }
+  if (e.migrate && !e.invest) { stepToward(e, e.x + Math.cos(e.migrate.dir) * 3, e.y + Math.sin(e.migrate.dir) * 3, sp * 0.55); if (e.stuckT > 1) e.migrate.dir += SR.r(-1, 1); return; }
   if (e.home && !e.invest && dist(e.x, e.y, e.home.x, e.home.y) > e.home.r) { stepToward(e, e.home.x, e.home.y, sp * 0.6); if (e.stuckT > 2) { e.x = e.home.x; e.y = e.home.y; e.stuckT = 0; } return; }
   if (e.invest) {
     if (G.t > e.invest.t || dist(e.x, e.y, e.invest.x, e.invest.y) < 1) e.invest = null;
@@ -1467,6 +1472,7 @@ function startDay() {
   for (let k = 0; k < 1 + SR.i(2); k++) spawnSurvivor();
   repopulateLandmarks();
   questOnDay();
+  postJobs();
   if (typeof saveGame === 'function') setTimeout(() => saveGame(false), 0);
   if (G.day >= 3 && SR.chance(0.45)) G.raidAt = (10 + SR.i(5)) * 60;
 }
@@ -1514,7 +1520,67 @@ function waveKind(kinds) {
   for (const q of kinds) if ((r -= MOBS[q].w) <= 0) return q;
   return 'walker';
 }
+// ── world events: air drops, horde migrations, SOS calls ─────────────────────
+function addEvent(k, x, y, label, hours, extra) { const ev = { id: G.nextId++, k, x, y, label, until: G.t + hours * 60 / MIN_PER_TICK / FPS, ...extra }; (G.events = G.events || []).push(ev); return ev; }
+function updateEvents() {
+  G.events = (G.events || []).filter(ev => G.t < ev.until && !ev.done);
+  const ps = alivePlayers(); if (!ps.length) return;
+  if (G.evDay !== G.day && G.phase === 'day' && G.clock > 9 * 60) {
+    G.evDay = G.day;
+    G.evPlan = [SR.r(9.5, 15) * 60, G.day >= 2 && SR.chance(0.6) ? SR.r(10, 16) * 60 : -1, SR.chance(0.7) ? SR.r(9.5, 14) * 60 : -1];
+  }
+  const plan = G.evPlan; if (!plan) return;
+  const p = SR.pick(ps);
+  if (plan[0] > 0 && G.clock >= plan[0]) { plan[0] = -1; airDrop(p); }
+  if (plan[1] > 0 && G.clock >= plan[1]) { plan[1] = -1; hordeMigration(p); }
+  if (plan[2] > 0 && G.clock >= plan[2]) { plan[2] = -1; sosCall(p); }
+  // the air drop crate burns a red flare until someone opens it; bandits come for it
+  for (const ev of G.events) {
+    if (ev.k === 'horde') { let sx = 0, sy = 0, n = 0; for (const e of G.ents) if (e.migrate && e.migrate.ev === ev.id) { sx += e.x; sy += e.y; n++; } if (n < 4) ev.done = true; else { ev.x = sx / n; ev.y = sy / n; } }
+    if (ev.k === 'drop') {
+      const c = W.conts[ev.cont];
+      if (!c || c.looted) { ev.done = true; continue; }
+      if (!ev.raid && G.t > ev.raidAt) { ev.raid = true; const n = 3 + Math.min(4, G.day >> 1); for (let k = 0; k < n; k++) { const q = ringCell(SR, c.x, c.y, 26, 34, undefined, 0, 'bandit'); if (q) { const h = spawnHuman(SR.pick(['bandit_thug', 'bandit_gunner', 'bandit_smg', 'bandit_shotgun']), q.x, q.y); h.goto = { x: c.x, y: c.y, t: G.t + 90 }; } } say('약탈단이 보급품을 노리고 접근합니다!', '#ff8a5c', -1, 0); }
+    }
+  }
+}
+function airDrop(p) {
+  for (let k = 0; k < 60; k++) {
+    const q = ringCell(SR, p.x, p.y, 70, 150); if (!q) continue;
+    const x = Math.floor(q.x), y = Math.floor(q.y);
+    if (W.reserved[idx(x, y)] || W.tile[idx(x, y)] === T.WATER || W.contAt[idx(x, y)]) continue;
+    const c = W.addCont('airdrop', x, y, -1); if (!c) continue;
+    updateCellMB(idx(x, y)); flowBaseDirty = true;
+    addEvent('drop', c.x, c.y, '보급품 투하', 6, { cont: c.id, raidAt: G.t + 70 });
+    fx({ k: 'newcont', id: c.id, kind: 'airdrop', x, y });
+    say('✈ 수송기가 보급품을 투하했습니다! 붉은 연기를 찾아가세요 (지도 표시)', '#ffd166', -1, 1); sfxAt('horn', p.x, p.y);
+    for (let j = 0; j < 4; j++) { const r = ringCell(SR, c.x, c.y, 4, 9); if (r) spawnMob(SR.pick(['walker', 'runner', 'walker']), r.x, r.y, false); }
+    return;
+  }
+}
+function hordeMigration(p) {
+  const a = SR.r(0, TAU), q = ringCell(SR, p.x, p.y, 50, 65, a, 0.3); if (!q) return;
+  const dir = Math.atan2(p.y - q.y, p.x - q.x) + SR.r(-0.5, 0.5), n = 22 + Math.min(30, G.day * 3);
+  const ev = addEvent('horde', q.x, q.y, '좀비 대이동', 4, { dir });
+  for (let k = 0; k < n; k++) {
+    const x = q.x + SR.r(-4, 4), y = q.y + SR.r(-4, 4); if (blockedAt(x, y, 'zombie')) continue;
+    const e = spawnMob(SR.pick(['walker', 'walker', 'walker', 'runner', 'crawler', ...(G.day >= 4 ? ['brute', 'spitter'] : [])]), x, y, false);
+    e.migrate = { dir, ev: ev.id };
+  }
+  say('⚠ 대규모 좀비 무리가 이동 중입니다 — 경로를 피하세요 (지도 표시)', '#ff7a5c', -1, 1);
+}
+function sosCall(p) {
+  const cands = W.survivorSpots.filter(s => { const d = dist(s.x, s.y, p.x, p.y); return d > 60 && d < 170; });
+  if (!cands.length) return;
+  const s = SR.pick(cands);
+  const h = spawnHuman('survivor', s.x, s.y, { mode: 'wait' });
+  h.name = SR.i(SURVIVOR_NAMES.length); h.perk = SR.pick(Object.keys(PERKS)); h.wpn = SR.pick(['pistol', 'smg', 'shotgun']); h.mag = WEAPONS[h.wpn].mag; h.hunger = 0; h.sos = true;
+  for (let k = 0; k < 4 + Math.min(4, G.day); k++) { const r = ringCell(SR, s.x, s.y, 3, 8); if (r) spawnMob(SR.pick(['walker', 'runner', 'crawler']), r.x, r.y, false, { home: { x: r.x, y: r.y, r: 6 } }); }
+  addEvent('sos', s.x, s.y, `구조 요청 — ${SURVIVOR_NAMES[h.name]}`, 8, { ent: h.id });
+  say(`📻 "누구 없어요? ${SURVIVOR_NAMES[h.name]}입니다… 좀비에 갇혔어요!" (지도 표시)`, '#9fe6a0', -1, 1);
+}
 function updateSpawns() {
+  if (G.tick % FPS === 3) { updateEvents(); jobsTick(); }
   if (G.phase === 'night' || G.phase === 'dawn') {
     G.nightTick++;
     const wv = G.waves[G.waveIdx];

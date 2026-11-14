@@ -254,6 +254,7 @@ function applyFx(o) {
     case 'hurt': if (o.pid === V.me) { V.hurt = 1; V.shake = Math.max(V.shake, 5); sfx('hurt'); } break;
     case 'tile': W.tile[o.i] = o.v; updateCellMB(o.i); invalidateChunkAt(o.i); break;
     case 'cont': if (W.conts[o.id]) W.conts[o.id].looted = !!o.v; break;
+    case 'newcont': if (NET.role === 'client' && !W.conts[o.id]) { const c = W.addCont(o.kind, o.x, o.y, -1); if (c) updateCellMB(idx(o.x, o.y)); } break;
     case 'contgone': { const c = W.conts[o.id]; if (c) { for (const k of c.cells) if (W.contAt[k] === c) { W.contAt[k] = null; updateCellMB(k); } c.gone = true; } break; }
     case 'contmove': { const c = W.conts[o.id]; if (c) { for (const k of c.cells) if (W.contAt[k] === c) { W.contAt[k] = null; updateCellMB(k); } Object.assign(c, { cells: o.cells, x: o.x, y: o.y, horiz: o.horiz, fuel: o.fuel, gone: false, looted: true }); for (const k of c.cells) { W.contAt[k] = c; updateCellMB(k); } } break; }
     case 'tp': if (o.pid === V.me) V.camInit = false; break;
@@ -347,6 +348,7 @@ function draw(dtReal) {
   }
   for (const p of G.players) if (p && p.joined && !p.dead) list.push({ y: p.y + 0.3, f: drawPlayer, a: p });
   for (const s of G.shots) list.push({ y: s.y + 0.3, f: drawShot, a: s });
+  for (const v of W.villages) { const bp = boardPos(v); if (bp.x > x0 - 2 && bp.x < x1 + 2 && bp.y > y0 - 2 && bp.y < y1 + 3) list.push({ y: bp.y + 0.3, f: drawBoard, a: v }); }
   for (const P of W.pois) if (P.mast && P.mast.x > x0 - 2 && P.mast.x < x1 + 2 && P.mast.y > y0 - 2 && P.mast.y < y1 + 6) list.push({ y: P.mast.y + 0.5, f: drawMast, a: P.mast });
   list.sort((p, q) => p.y - q.y);
   for (const d of list) d.f(g, d.a, d.b);
@@ -438,8 +440,16 @@ function drawWallTile(g, x, y) {
   g.fillStyle = top; g.fillRect(px, py - WALL_H, TILE, TILE);
   g.fillStyle = 'rgba(255,255,255,0.08)'; g.fillRect(px, py - WALL_H, TILE, 2);
 }
+// painted sprite versions (when the atlas is loaded): a trunk, a ground shadow and the crown seen from above
+function spriteTree(g, x, y, key, size) {
+  const px = x * TILE + 16, py = y * TILE + 16, h = hash(x, y), s = size * (0.85 + h * 0.35), sway = Math.sin(V.frame / 70 + h * 10) * 1.2;
+  g.fillStyle = 'rgba(0,0,0,.28)'; g.beginPath(); g.ellipse(px + 8, py + 8, s * 0.42, s * 0.22, 0, 0, TAU); g.fill();
+  g.fillStyle = '#4a3020'; g.fillRect(px - 3, py - 8, 6, 16);
+  return drawSprite(g, key, px + sway, py - s * 0.36, s, h * TAU);
+}
 function drawTree(g, x, y) {
   const px = x * TILE + 16, py = y * TILE + 16, h = hash(x, y), s = 0.85 + h * 0.4;
+  if (SPR.img) { const b = W.biome[idx(x, y)], key = b === BIO.MOUNTAIN || (b === BIO.FOREST && h > 0.72) ? (h > 0.86 ? 'pine2' : 'pine1') : ['tree1', 'tree2', 'tree3'][(h * 3) | 0]; if (sprOk(key) && spriteTree(g, x, y, key, 74)) return; }
   const sway = Math.sin(V.frame / 60 + h * 10) * 1.5;
   g.fillStyle = 'rgba(0,0,0,.3)'; g.beginPath(); g.ellipse(px + 4, py + 8, 18 * s, 8 * s, 0, 0, TAU); g.fill();
   g.fillStyle = '#4a3020'; g.fillRect(px - 3, py - 10, 6, 18);
@@ -448,6 +458,7 @@ function drawTree(g, x, y) {
 }
 function drawDeadTree(g, x, y) {
   const px = x * TILE + 16, py = y * TILE + 22, h = hash(x, y);
+  if (sprOk('deadtree1') && spriteTree(g, x, y, W.biome[idx(x, y)] === BIO.WASTE ? 'deadtree2' : 'deadtree1', 62)) return;
   g.fillStyle = 'rgba(0,0,0,.28)'; g.beginPath(); g.ellipse(px + 3, py + 2, 10, 4, 0, 0, TAU); g.fill();
   g.strokeStyle = '#3a2e24'; g.lineCap = 'round'; g.lineWidth = 5;
   g.beginPath(); g.moveTo(px, py); g.lineTo(px + (h - 0.5) * 6, py - 34); g.stroke();
@@ -456,6 +467,7 @@ function drawDeadTree(g, x, y) {
 }
 function drawBush(g, x, y) {
   const px = x * TILE + 16, py = y * TILE + 20, h = hash(x, y), b = W.biome[idx(x, y)];
+  if (sprOk('bush1')) { g.fillStyle = 'rgba(0,0,0,.22)'; g.beginPath(); g.ellipse(px + 3, py + 2, 15, 6, 0, 0, TAU); g.fill(); if (drawSprite(g, h > 0.6 ? 'bush2' : 'bush1', px, py - 6, 38 + h * 8, h * TAU)) return; }
   const cols = b === BIO.SWAMP ? ['#2c4026', '#3a5430', '#4a6638'] : ['#2f5a26', '#3d7030', '#4f8a3a'];
   g.fillStyle = 'rgba(0,0,0,.25)'; g.beginPath(); g.ellipse(px + 2, py + 2, 14, 5, 0, 0, TAU); g.fill();
   for (let k = 0; k < 3; k++) { g.fillStyle = cols[k]; g.beginPath(); g.arc(px - 7 + k * 7 + (h - 0.5) * 4, py - 6 - (k === 1 ? 5 : 0), 9 - k, 0, TAU); g.fill(); }
@@ -472,6 +484,7 @@ function drawRuin(g, x, y) {
 }
 function drawRock(g, x, y) {
   const px = x * TILE + 16, py = y * TILE + 18;
+  if (sprOk('rock1')) { const h = hash(x, y); g.fillStyle = 'rgba(0,0,0,.3)'; g.beginPath(); g.ellipse(px + 3, py + 4, 16, 7, 0, 0, TAU); g.fill(); if (drawSprite(g, ['rock1', 'rock2', 'rock3'][(h * 3) | 0], px, py - 5, 36 + h * 8, h * TAU)) return; }
   g.fillStyle = 'rgba(0,0,0,.3)'; g.beginPath(); g.ellipse(px + 2, py + 4, 15, 6, 0, 0, TAU); g.fill();
   g.fillStyle = '#6a6a6e'; g.beginPath(); g.ellipse(px, py - 4, 14, 11, 0, 0, TAU); g.fill();
   g.fillStyle = '#8a8a8e'; g.beginPath(); g.ellipse(px - 3, py - 8, 8, 6, 0, 0, TAU); g.fill();
@@ -486,8 +499,26 @@ function drawTent(g, x, y) {
   g.fillStyle = '#4a4a30'; g.fillRect(px, py + 6, TILE, 26);
   g.fillStyle = (x + y) % 2 ? '#7a7448' : '#6a6440'; g.fillRect(px, py - 10, TILE, 18);
 }
+const ROOF_OF = { house: 'roof_red', store: 'roof_metal', police: 'roof_concrete', clinic: 'roof_concrete', garage: 'roof_metal', warehouse: 'roof_green', office: 'roof_concrete',
+  hospital: 'roof_concrete', lab: 'roof_concrete', barracks: 'roof_green', church: 'roof_shingle', cellblock: 'roof_concrete', school: 'roof_red', station: 'roof_metal',
+  farmhouse: 'roof_shingle', tower: 'roof_concrete', apartment: 'roof_concrete', mart: 'roof_metal', bunker: 'roof_concrete', cabin: 'roof_shingle' };
+const roofPat = {};
 function drawRoof(g, b, a) {
   const px = b.x * TILE, py = b.y * TILE - WALL_H, w = b.w * TILE, h = b.h * TILE;
+  const rk = ROOF_OF[b.type], rt = rk && TEX[rk];
+  if (rt) {
+    g.globalAlpha = a;
+    const pat = roofPat[rk] || (roofPat[rk] = g.createPattern(rt, 'repeat'));
+    g.save(); g.translate(px - 3, py - 3); g.fillStyle = pat; g.fillRect(0, 0, w + 6, h + 6); g.restore();
+    g.fillStyle = 'rgba(255,255,255,.08)'; g.fillRect(px - 3, py - 3, w + 6, h / 2 + 3); // lit slope
+    g.fillStyle = 'rgba(0,0,0,.18)'; g.fillRect(px - 3, py + h / 2, w + 6, h / 2 + 3);
+    g.fillStyle = 'rgba(0,0,0,.35)'; g.fillRect(px - 3, py + h / 2 - 1, w + 6, 3); // ridge
+    g.strokeStyle = 'rgba(0,0,0,.45)'; g.lineWidth = 2; g.strokeRect(px - 3, py - 3, w + 6, h + 6);
+    if (b.village >= 0 && G.vh[b.village] <= 0) { g.fillStyle = 'rgba(255,200,120,.5)'; g.fillRect(px + w * 0.3, py + h * 0.75, 6, 4); }
+    if (a > 0.6) { g.font = 'bold 12px system-ui, sans-serif'; g.textAlign = 'center'; g.fillStyle = 'rgba(255,255,255,.8)'; g.fillText(b.village >= 0 ? '민가' : b.name, px + w / 2, py + h / 2 - 6); }
+    g.globalAlpha = 1;
+    return;
+  }
   g.globalAlpha = a;
   g.fillStyle = b.roof; g.fillRect(px - 3, py - 3, w + 6, h + 6);
   g.fillStyle = shade(b.roof, 1.15); g.fillRect(px - 3, py - 3, w + 6, h / 2 + 3);
@@ -506,7 +537,16 @@ function shade(hex, k) {
   return `rgb(${r},${gg},${b})`;
 }
 // top-down car, rotated; used for parked and driven cars
+const CAR_SPR = { '#7a2f2f': 'car_red', '#2f4a7a': 'car_blue', '#e8e8e8': 'car_white', '#d0c080': 'car_white', '#8a8a8a': 'car_white' };
 function drawCar(g, x, y, ang, color, o = {}) {
+  const ck = o.wreck ? 'car_wreck' : CAR_SPR[color] || (hash(color.length, color.charCodeAt(2)) > 0.5 ? 'car_blue' : 'car_red');
+  if (sprOk(ck)) {
+    g.save(); g.translate(x + 3, y + 4); g.rotate(ang); g.fillStyle = 'rgba(0,0,0,.38)'; roundRect(g, -30, -15, 60, 30, 10); g.fill(); g.restore();
+    g.globalAlpha = o.dim && o.dim < 1 ? 0.85 : 1; drawSprite(g, ck, x, y - 6, 64, ang); g.globalAlpha = 1;
+    if (o.driver) { g.fillStyle = o.driver; g.beginPath(); g.arc(x - Math.cos(ang) * 4, y - 6 - Math.sin(ang) * 4, 4, 0, TAU); g.fill(); }
+    if (o.lights) { g.fillStyle = 'rgba(255,250,200,.9)'; for (const sd of [-1, 1]) g.fillRect(x + Math.cos(ang) * 30 - Math.sin(ang) * 9 * sd - 2, y - 6 + Math.sin(ang) * 30 + Math.cos(ang) * 9 * sd - 2, 4, 4); }
+    return;
+  }
   const L = 58, Wd = 28, dim = o.dim || 1, body = shade(color, dim), dark = shade(color, dim * 0.62), lite = shade(color, Math.min(1.5, dim * 1.28));
   g.save(); g.translate(x, y + 4); g.fillStyle = 'rgba(0,0,0,.38)'; g.rotate(ang); roundRect(g, -L / 2 + 3, -Wd / 2 + 3, L, Wd, 9); g.fill(); g.restore();
   g.save(); g.translate(x, y - 6); g.rotate(ang);
@@ -531,6 +571,14 @@ function drawCont(g, c) {
   if (c.kind === 'car') {
     drawCar(g, x, y, c.horiz ? (hash(c.id, 3) > 0.5 ? 0 : Math.PI) : (hash(c.id, 5) > 0.5 ? Math.PI / 2 : -Math.PI / 2), c.color || '#555', { dim, wreck: !c.drive, rust: !c.drive });
     if (c.looted && c.drive) { const p = meP(); if (p && dist(p.x, p.y, c.x, c.y) < 5) { g.fillStyle = '#9fe6ff'; g.font = 'bold 10px system-ui'; g.textAlign = 'center'; g.fillText('🔑', x, y - 30); } }
+  } else if (c.kind === 'airdrop') {
+    g.fillStyle = 'rgba(0,0,0,.35)'; g.fillRect(x - 16, y + 2, 34, 10);
+    g.fillStyle = '#3a5470'; g.fillRect(x - 16, y - 14, 32, 22); g.fillStyle = '#4e6e90'; g.fillRect(x - 16, y - 20, 32, 8);
+    g.strokeStyle = '#c8b060'; g.lineWidth = 2; g.strokeRect(x - 15, y - 19, 30, 26); g.beginPath(); g.moveTo(x, y - 20); g.lineTo(x, y + 8); g.stroke();
+    if (!c.looted) { g.fillStyle = 'rgba(240,240,230,.85)'; g.beginPath(); g.ellipse(x + 26, y + 4, 18, 9, 0.4, 0, TAU); g.fill(); if (Math.random() < 0.5) V.parts.push({ k: 'redsmoke', x: c.x + 0.5, y: c.y, t: 0, life: rnd(2.5, 4), s: rnd(5, 9), vx0: rnd(-0.2, 0.4) }); }
+  } else if (sprOk(c.kind) || (c.kind === 'locker' && sprOk('cabinet'))) {
+    g.fillStyle = 'rgba(0,0,0,.3)'; g.beginPath(); g.ellipse(x + 3, y + 6, 15, 6, 0, 0, TAU); g.fill();
+    g.globalAlpha = c.looted ? 0.7 : 1; drawSprite(g, sprOk(c.kind) ? c.kind : 'cabinet', x, y - 4, 32); g.globalAlpha = 1;
   } else {
     g.fillStyle = 'rgba(0,0,0,.3)'; g.fillRect(x - 13, y + 4, 28, 8);
     g.fillStyle = shade(D.color, 0.7 * dim); g.fillRect(x - 13, y - 6, 26, 14);
@@ -572,6 +620,7 @@ function drawHazard(g, h) {
 }
 function drawGrave(g, x, y) {
   const px = x * TILE + 16, py = y * TILE + 18;
+  if (sprOk('grave')) { g.fillStyle = 'rgba(0,0,0,.3)'; g.fillRect(px - 9, py + 2, 20, 5); if (drawSprite(g, 'grave', px, py - 6, 26)) return; }
   g.fillStyle = 'rgba(0,0,0,.3)'; g.fillRect(px - 9, py + 2, 20, 5);
   g.fillStyle = '#7a7a80'; roundRect(g, px - 8, py - 22, 16, 26, 6); g.fill();
   g.fillStyle = '#5a5a60'; g.fillRect(px - 1, py - 18, 2, 10); g.fillRect(px - 5, py - 15, 10, 2);
@@ -585,8 +634,17 @@ function drawMast(g, m) {
   g.fillStyle = blink || live ? '#ff3b2b' : '#5a1010'; g.beginPath(); g.arc(x, y - 192, 4, 0, TAU); g.fill();
   if (live) V.lights.push({ x: m.x, y: m.y - 5, r: 3, t: 0.03 });
 }
+const STRUCT_SPR = { core: ['core', 72], bench: ['bench', 40], radio: ['radio', 34], barrel: ['barrel', 26] };
 function drawStruct(g, s) {
-  const x = s.x * TILE, y = s.y * TILE, fl = s.flash > 0;
+  const x = s.x * TILE, y = s.y * TILE, fl = s.flash > 0, sp = STRUCT_SPR[s.type];
+  if (sp && sprOk(sp[0]) && !s.ghost) {
+    g.fillStyle = 'rgba(0,0,0,.3)'; g.beginPath(); g.ellipse(x + 3, y + 6, sp[1] * 0.5, sp[1] * 0.22, 0, 0, TAU); g.fill();
+    drawSprite(g, sp[0], x, y - 6, sp[1]);
+    if (fl) { g.globalAlpha = 0.5; g.fillStyle = '#fff'; g.beginPath(); g.arc(x, y - 6, sp[1] * 0.4, 0, TAU); g.fill(); g.globalAlpha = 1; }
+    if (s.type === 'core') { g.fillStyle = (V.frame >> 4) & 1 ? 'rgba(120,220,255,.5)' : 'rgba(60,170,220,.4)'; g.beginPath(); g.arc(x, y - 8, 9, 0, TAU); g.fill(); }
+    if (s.type === 'radio') { g.fillStyle = (V.frame >> 4) & 1 ? '#7dff9a' : '#2a5a2a'; g.fillRect(x - 6, y - 10, 4, 3); }
+    return;
+  }
   switch (s.type) {
     case 'core': {
       g.fillStyle = 'rgba(0,0,0,.35)'; g.fillRect(x - 30, y - 10, 64, 40);
@@ -848,6 +906,7 @@ function drawPart(g, p) {
     case 'spark': g.fillStyle = `rgba(255,220,150,${1 - k})`; g.fillRect(x - 2, y - 16, 4, 4); break;
     case 'swing': g.strokeStyle = `rgba(255,255,255,${0.7 * (1 - k)})`; g.lineWidth = 3; g.beginPath(); g.arc(x, y - 16, 26, p.a - 0.9, p.a + 0.9); g.stroke(); break;
     case 'shell': { g.save(); g.translate(x, y - p.z * TILE); g.rotate(p.rot + p.t * 12 * (p.z > 0 ? 1 : 0)); g.fillStyle = '#d8b040'; g.fillRect(-2, -1, 4, 2); g.restore(); break; }
+    case 'redsmoke': g.fillStyle = `rgba(210,60,50,${0.38 * (1 - k)})`; g.beginPath(); g.arc(x + p.vx0 * p.t * 40 + Math.sin(p.t * 2) * 6, y - 14 - p.t * 46, p.s * (0.6 + k * 1.6), 0, TAU); g.fill(); break;
     case 'ember': g.fillStyle = `rgba(255,${160 + (p.t * 80 | 0)},60,${1 - k})`; g.fillRect(x + Math.sin(p.t * 5) * 4 + p.vx0 * p.t * 30, y - 14 - p.t * 40, 2, 2); break;
     case 'ring': g.strokeStyle = `rgba(220,220,255,${1 - k})`; g.lineWidth = 3; g.beginPath(); g.arc(x, y - 20, k * 200, 0, TAU); g.stroke(); break;
   }

@@ -146,6 +146,8 @@ function drawHud(g) {
   for (const q of G.players) if (q && q !== p && q.joined && !q.dead) arrow(q.x, q.y, q.color, q.name);
   if (dist(p.x, p.y, G.core.x, G.core.y) > 12) arrow(G.core.x, G.core.y, '#7df', '기지');
   questArrow(g, arrow);
+  for (const j of G.jobs || []) if (j.taken && !j.done) { const t = jobTarget(j); if (t && dist(t.x, t.y, p.x, p.y) > 8 && (j.k === 'clear' || j.k === 'scout' || jobReady(j))) arrow(t.x, t.y, '#c8a0ff', jobReady(j) ? '의뢰 보고' : '의뢰'); }
+  for (const ev of G.events || []) arrow(ev.x, ev.y, ev.k === 'drop' ? '#ffd166' : ev.k === 'horde' ? '#ff5c4c' : '#9fe6a0', ev.label);
 
   // messages
   let my = T_ ? 340 : 200;
@@ -205,6 +207,7 @@ function drawMiniMap(g, x, y, w, h, alphaEnts, view) {
   for (const c of W.camps) box(c, '#ff8a5c');
   for (const P of W.pois) box(P, P.generic ? 'rgba(208,160,255,.55)' : '#d0a0ff');
   for (const s of G.structs) if (s.type === 'campfire') dot(s.x, s.y, '#ffb347', 4);
+  for (const ev of G.events || []) { const c = ev.k === 'drop' ? '#ffd166' : ev.k === 'horde' ? '#ff5c4c' : '#9fe6a0', pulse = 3 + ((V.frame >> 3) & 3); g.strokeStyle = c; g.lineWidth = 2; g.beginPath(); g.arc(sx(ev.x), sy(ev.y), ev.k === 'horde' ? pulse + 6 : pulse, 0, TAU); g.stroke(); if (!view) txt(g, ev.label, sx(ev.x), sy(ev.y) - 10, c, 10, 'center'); }
   if (G.Q) { const ids = trackedQuests(); const t = ids.length && questTarget(ids[0]); if (t) { g.fillStyle = (V.frame >> 4) & 1 ? '#ffd166' : '#a07a20'; g.beginPath(); g.arc(sx(t.x), sy(t.y), 4, 0, TAU); g.fill(); } }
   for (const e of G.ents) {
     if (dist(e.x, e.y, p.x, p.y) > 34 && !(e.kind === 'survivor') && !e.def.shop) continue;
@@ -245,6 +248,7 @@ function drawUI(g) {
   if (V.panel && V.panel.k === 'bench') drawBench(g);
   if (V.panel && V.panel.k === 'talk') drawTalk(g);
   if (V.panel && V.panel.k === 'journal') drawJournal(g);
+  if (V.panel && V.panel.k === 'jobs') drawJobs(g);
   if (V.help) drawHelp(g);
   if (V.paused) {
     const host = NET.role !== 'client';
@@ -350,30 +354,28 @@ function drawBench(g) {
   });
 }
 function drawHelp(g) {
-  const b = panelBox(g, 800, 660, '도움말');
+  const b = panelBox(g, 860, 720, '도움말');
   const lines = [
-    '목표: 낮에는 파밍·거래·구조, 밤에는 기지(발전기 코어)를 지키며 최대한 오래 생존하세요.',
+    '목표: 1024×1024 섬을 탐험하며 파밍·거래·구조, 밤에는 기지(발전기 코어)를 지키며 오래 생존하세요. 매일 아침 자동 저장.',
     '',
-    '이동 WASD · 조준 마우스 · 사격 좌클릭 · 달리기 Shift · 은신 C(토글) / Ctrl',
-    '재장전 R · 무기 1~7 / 휠 · 상호작용 E(누르기/길게) · 먹기 F · 치료 H · 수류탄 G · 건설 B · 지도 M',
+    '이동 WASD · 조준 마우스 · 사격 좌클릭 · 달리기 Shift · 은신 C · 재장전 R · 무기 1~7 · 상호작용 E · 먹기 F · 치료 H',
+    '수류탄 G · 화염병 T · 아드레날린 V · 건설 B · 지도 M · 일지 J · 메뉴/저장 ESC',
     '',
-    '• 탄창: 무기마다 예비 탄창이 따로 있습니다. 재장전하면 가장 꽉 찬 탄창을 끼우고 남은 탄창은 다시 보관합니다.',
-    '   탄창은 상인에게서 사거나, 상자·적에게서 얻습니다.',
-    '• 작업대(기지): 무기의 피해량/탄창 용량/연사/재장전을 5단계까지 강화.',
-    '• 건설: 벽·문·가시·포탑·조명·드럼·지뢰. 좀비는 길을 막는 구조물을 부수며 코어로 갑니다.',
-    '• 마을: 상인과 거래하거나, 창고·집 물건을 훔칠 수 있습니다(주황 표시). 주민 시야(눈 아이콘)에',
-    '   들키면 마을 전체가 적대 → 전투. 죽이면 그 사람의 소지품·상점 재고 전부를 주울 수 있습니다.',
-    '• 은신(C)하면 들키는 거리가 크게 줄고 소리도 작아집니다. 밤에는 시야가 더 짧습니다.',
-    '• 생존자: "살려줘!" 표시된 사람을 [E]로 구출 → 따라오기/경계 전환. 매일 아침 식량 1개씩 먹습니다.',
-    '   특기: 사수 · 정비공(자동 수리) · 의무병(회복) · 수집가(매일 물자).',
-    '• 약탈단: 캠프에 좋은 물자가 있습니다. 3일차부터 낮에 기지를 습격하기도 합니다.',
-    '• 좀비: 워커·크롤러·러너·스피터(산성)·브루트(벽 파괴)·블로터(자폭)·스크리머(동료 호출)·5일마다 보스.',
-    '• 협동: 타이틀에서 "방 만들기" → 코드 공유 → 친구가 "참가하기". 자원은 공유, 쓰러지면 서로 살릴 수 있습니다.',
-    '• 이야기: 기지 무전기에서 시작 → 송신탑 → 치료제/탈출 두 갈래. 마을 대표(!)의 부탁을 들어주면 신뢰도·할인. 엔딩 4종.',
-    '• 새 위협: 좀비견(무리)·진압대(정면 방패)·독성(죽으면 가스)·추적자(은신 돌진), 교단(화염병), 보스 4종.',
-    '• T 화염병 · V 아드레날린 · J 일지(임무·기록) · 작업대 [제작] 탭에서 수류탄·화염병·방탄조끼 제작.',
+    '• 월드: 숲·늪·황무지·농경지·산악·해안 바이옴, 도시 6곳(고속도로 연결), 마을 8곳, 약탈단 캠프 10곳, 각종 시설. 지도는 가 본 곳만 밝혀집니다.',
+    '• 채집: 나무(목재) · 바위(고철·광석) · 덤불(열매·약초) · 잔해(고철·부품) · 작물(식량)을 [E] 길게.',
+    '• 루팅은 시끄럽고 오래 걸립니다. 뒤지는 중에 좀비가 문으로 밀고 들어오거나, 숨어 있던 놈이 튀어나오거나,',
+    '   차량 경보가 울리거나, 마을 집주인이 돌아올 수 있습니다. 심장 소리가 들리면 조심하세요.',
+    '• 차량: 뒤진 차량 중 🔑 표시가 있으면 연료 1로 시동 → 이동키로 운전, Shift 가속, [E] 내리기. 좀비를 들이받을 수 있지만 소리가 큽니다.',
+    '• 모닥불 거점(건설 9): 어디든 설치 가능. 주변 7칸에 건설 가능, 체력 회복, 기지↔최근 모닥불 빠른 이동(식량 1, 낮만).',
+    '• 밤: 기지 근처에 있으면 웨이브가 기지를 공격합니다. 멀리 있으면 무리가 냄새를 쫓아오고, 기지는 포탑·경계 동료·벽이 대신 막습니다.',
+    '• 날씨: 비(발소리가 묻힘) · 안개(시야 감소) · 폭풍우(번개로 불이 남).',
+    '• 이벤트: ✈ 보급품 투하(붉은 연기, 약탈단도 노림) · ⚠ 좀비 대이동 · 📻 구조 요청. 화살표와 지도에 표시됩니다.',
+    '• 마을 의뢰 게시판(!): 물자 전달·사냥·소탕·정찰 → 보상과 신뢰도. 상인과 거래하거나 훔칠 수도 있습니다(들키면 전투).',
+    '• 작업대(기지): 무기 강화 5단계, 수류탄·화염병·방탄조끼 등 제작. 탄창은 무기별로 따로 관리됩니다.',
+    '• 이야기: 기지 무전기 → 송신탑 → 치료제/탈출 두 갈래, 마을 대표 의뢰, 엔딩 4종. J 일지에서 확인.',
+    '• 협동: "방 만들기" → 코드 공유 → 친구가 "참가하기". 자원 공유, 쓰러지면 서로 살릴 수 있습니다.',
   ];
-  lines.forEach((l, i) => txt(g, l, b.x + 18, b.y + 60 + i * 26, l.startsWith('•') ? '#ddd' : '#bbb', 12, 'left', false));
+  lines.forEach((l, i) => txt(g, l, b.x + 18, b.y + 58 + i * 25, l.startsWith('•') ? '#ddd' : '#bbb', 12, 'left', false));
   uiBtn(b.x, b.y, b.w, b.h, () => { V.help = false; });
 }
 function wrapLines(g, text, maxW) {
@@ -519,6 +521,7 @@ function pressUse() {
   if (it.ui === 'shop') { V.panel = { k: 'shop', npc: it.e.id }; V.shopScroll = 0; sfx('click'); return; }
   if (it.ui === 'bench') { V.panel = { k: 'bench', tab: 0 }; sfx('click'); return; }
   if (it.ui === 'talk') { V.panel = { k: 'talk', npc: it.npc }; sfx('click'); return; }
+  if (it.ui === 'jobs') { V.panel = { k: 'jobs', v: it.v }; sfx('click'); return; }
   sendCmd({ c: 'tap' });
 }
 // aim assist for touch: snap to the closest hostile in a cone
