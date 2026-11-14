@@ -610,7 +610,7 @@ function interactTap(p) {
     say(`${e.title || e.def.name}: 고마워요! 따라갈게요.`, '#7dff9a', -1, 1); sfxAt('unlock', e.x, e.y);
   } else if (it.kind === 'survivor') {
     const e = it.e, nm = SURVIVOR_NAMES[e.name];
-    if (e.mode === 'wait') { if (e.sos) { for (const ev of G.events || []) if (ev.ent === e.id) ev.done = true; e.sos = false; G.stash.cash += 40; say('구조 성공! 사례금 $40', '#ffd166', p.pid); } e.mode = 'follow'; e.follow = p.pid; say(`${nm}(${PERKS[e.perk].name}) 합류! ${PERKS[e.perk].desc}`, '#7dff9a', -1, 1); sfxAt('unlock', e.x, e.y); }
+    if (e.mode === 'wait') { e.transient = false; if (e.sos) { for (const ev of G.events || []) if (ev.ent === e.id) ev.done = true; e.sos = false; G.stash.cash += 40; say('구조 성공! 사례금 $40', '#ffd166', p.pid); } e.mode = 'follow'; e.follow = p.pid; say(`${nm}(${PERKS[e.perk].name}) 합류! ${PERKS[e.perk].desc}`, '#7dff9a', -1, 1); sfxAt('unlock', e.x, e.y); }
     else if (e.mode === 'follow') { e.mode = 'guard'; e.home = { x: e.x, y: e.y }; say(`${nm}: 여기를 지키겠습니다.`, '#cfe8ff', p.pid); }
     else { e.mode = 'follow'; e.follow = p.pid; say(`${nm}: 따라가겠습니다.`, '#cfe8ff', p.pid); }
   }
@@ -1620,6 +1620,23 @@ function updateSpawns() {
 // with the mix decided by the biome, and despawn when everyone is far away.
 function ambientSpawns() {
   const ps = alivePlayers(); if (!ps.length) return;
+  // travellers on the roads: bandit patrols (hostile) and small survivor groups (friendly, may join)
+  if (G.phase === 'day' && SR.chance(G.day >= 2 ? 0.012 : 0.004) && G.ents.filter(e => e.transient).length < 4 * ps.length) {
+    const p = SR.pick(ps);
+    let c = null; for (let k = 0; k < 12 && !c; k++) { const q = ringCell(SR, p.x, p.y, 30, 46, undefined, 0, 'bandit'); if (q && (W.tile[q.i] === T.ROAD || W.tile[q.i] === T.DIRT || W.tile[q.i] === T.WALK)) c = q; }
+    if (c && !villageAt(c.x, c.y)) {
+      const bandits = SR.chance(0.65), n = bandits ? 2 + SR.i(2) + (G.day >= 4 ? 1 : 0) : 2 + SR.i(2);
+      const dest = SR.chance(0.5) ? { x: p.x + SR.r(-8, 8), y: p.y + SR.r(-8, 8) } : SR.pick(W.towns);
+      for (let k = 0; k < n; k++) {
+        const kind = bandits ? SR.pick(['bandit_thug', 'bandit_gunner', 'bandit_smg', 'bandit_shotgun']) : 'survivor';
+        const h = spawnHuman(kind, c.x + SR.r(-1, 1), c.y + SR.r(-1, 1), kind === 'survivor' ? { mode: 'wait' } : {});
+        if (blockedAt(h.x, h.y, h.team)) { h.x = c.x; h.y = c.y; }
+        h.transient = true; h.goto = { x: dest.x + SR.r(-2, 2), y: dest.y + SR.r(-2, 2), t: G.t + 120 };
+        if (kind === 'survivor') { h.name = SR.i(SURVIVOR_NAMES.length); h.perk = SR.pick(Object.keys(PERKS)); h.wpn = SR.pick(['pistol', 'smg', 'shotgun', 'rifle']); h.mag = WEAPONS[h.wpn].mag; h.hunger = 0; }
+      }
+      if (!bandits) say('멀리서 생존자 무리가 지나갑니다 — 구출하면 합류할지도', '#9fe6a0', p.pid);
+    }
+  }
   const dark = G.phase === 'night' || G.phase === 'dusk' || G.phase === 'dawn';
   const cap = Math.min(80, 26 + G.day * 4) * (dark ? 1.5 : 1) / Math.max(1, ps.length * 0.75);
   for (const p of ps) {
@@ -1655,7 +1672,7 @@ function activation(force) {
     if (e.dead || e.tag || e.wave || e.hunt !== undefined || e.mode === 'follow' || e.mode === 'raid' || e.mode === 'guard' || e.kind === 'merchant' || e.goto) continue;
     if (e.kind === 'survivor' && e.mode !== 'wait') continue;
     if (near(e.x, e.y, ACT_OUT)) continue;
-    if (e.cat === 'mob' && !e.home) { e.dead = true; continue; } // despawn
+    if ((e.cat === 'mob' && !e.home) || e.transient) { e.dead = true; continue; } // despawn
     e.frozen = true; e.target = null; e.path = null; e.invest = null; G.frozen.push(e);
   }
   for (let k = G.frozen.length - 1; k >= 0; k--) {
