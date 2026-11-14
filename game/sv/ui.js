@@ -63,7 +63,8 @@ function drawHud(g) {
   const cx = VIEW_W / 2, cw = small ? 150 : 210;
   g.fillStyle = night ? 'rgba(30,10,20,.7)' : 'rgba(0,0,0,.5)'; roundRect(g, cx - cw / 2, 8, cw, 40, 8); g.fill();
   txt(g, `${night ? '☾' : '☀'} ${G.day}일차  ${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`, cx, 26, night ? '#ff9a8a' : '#ffe9a8', small ? 13 : 15, 'center');
-  const sub = night ? `밤 ${G.nightN} · 웨이브 ${Math.min(G.waveIdx || 0, 4)}/4` : G.phase === 'dusk' ? '해질녘 — 방어 준비!' : `밤까지 ${fmtMin(((NIGHT - c) + 1440) % 1440)}`;
+  const wn = G.weather && G.weather.i > 0.2 ? ' · ' + WEATHER_NAMES[G.weather.k] : '';
+  const sub = (night ? `밤 ${G.nightN} · 웨이브 ${Math.min(G.waveIdx || 0, 5)}/5` : G.phase === 'dusk' ? '해질녘 — 방어 준비!' : `밤까지 ${fmtMin(((NIGHT - c) + 1440) % 1440)}`) + wn;
   txt(g, sub, cx, 42, '#bbb', 10, 'center', false);
 
   // resources (icons from the generated atlas)
@@ -628,14 +629,15 @@ const SFX = {
   swish: [600, 0.05, 'noise', 0.02], eat: [500, 0.1, 'triangle', 0.05], buy: [1300, 0.1, 'triangle', 0.06], click: [800, 0.02, 'square', 0.02],
   spit: [300, 0.12, 'sawtooth', 0.04], fireball: [180, 0.2, 'sawtooth', 0.05], scream: [900, 0.6, 'sawtooth', 0.06], thud: [90, 0.08, 'noise', 0.07],
   clang: [500, 0.1, 'square', 0.04], beep: [1800, 0.08, 'square', 0.04], alarm: [880, 0.5, 'square', 0.06], horn: [110, 1.2, 'sawtooth', 0.09], over: [220, 1.0, 'sawtooth', 0.08],
-  door: [70, 0.4, 'noise', 0.14], engine: [55, 0.9, 'sawtooth', 0.08],
+  door: [70, 0.4, 'noise', 0.14], engine: [55, 0.9, 'sawtooth', 0.08], thunder: [40, 2.2, 'noise', 0.35],
 };
 function sfx(name, x, y) {
-  if (!actx || sfxBudget > 8 || !SFX[name]) return;
+  if (!actx || sfxBudget > 8 || !(SFX[name] || name === 'groan' || name === 'heart')) return;
   let vol = 1;
   const p = G && meP();
   if (p && x !== undefined) { const d = dist(p.x, p.y, x, y); if (d > 28) return; vol = 1 - d / 28; }
   sfxBudget++;
+  if (typeof richSfx === 'function' && richSfx(name, vol)) return;
   const [f, d, type, v] = SFX[name], t = actx.currentTime, gn = actx.createGain();
   gn.gain.setValueAtTime(v * vol, t); gn.gain.exponentialRampToValueAtTime(0.0001, t + d); gn.connect(master);
   if (type === 'noise') {

@@ -94,7 +94,7 @@ function encodeSnap(forPid) {
   const sendQ = NET.qv !== G.Q.v || G.tick % 150 === 0; NET.qv = G.Q.v;
   return {
     k: 's', t: G.tick, c: G.clock, d: G.day, ph: G.phase, n: G.nightN, wi: G.waveIdx || 0, o: G.over, mh: G.merchantHostile, vh: G.vh, w: G.warn, kl: G.kills,
-    mil: G.milHostile, q: sendQ ? G.Q : undefined, H: G.hazards.map(h => [h.k === 'fire' ? 1 : 0, r2(h.x), r2(h.y), r2(h.r), r2(h.t)]),
+    mil: G.milHostile, q: sendQ ? G.Q : undefined, wx: G.weather ? [G.weather.k, r2(G.weather.i)] : 0, H: G.hazards.map(h => [h.k === 'fire' ? 1 : 0, r2(h.x), r2(h.y), r2(h.r), r2(h.t)]),
     st: G.stash, sh: shops,
     P: G.players.map(p => p && { j: p.joined, x: r2(p.x) / 100, y: r2(p.y) / 100, a: r2(p.angle) / 100, hp: p.hp, hu: p.hunger, sta: p.stamina, w: p.wpn, m: p.mag,
                                  rl: p.reloadT, dn: p.down, dd: p.dead, dt: p.downT, up: p.useP, ul: p.useLabel, f: p.flash, ft: p.fireT, cr: p.in.crouch, mv: p.in.moving,
@@ -149,6 +149,7 @@ function clientSnap(s) {
   NET.lastSnap = performance.now();
   G.tick = s.t; G.clock = s.c; G.day = s.d; G.phase = s.ph; G.nightN = s.n; G.waveIdx = s.wi; G.merchantHostile = s.mh; G.vh = s.vh; G.warn = s.w; G.kills = s.kl;
   G.milHostile = s.mil; if (s.q) G.Q = s.q;
+  if (s.wx) G.weather = { k: s.wx[0], i: s.wx[1] / 100 };
   G.hazards = s.H.map(([f, x, y, r, t]) => ({ k: f ? 'fire' : 'gas', x: x / 100, y: y / 100, r: r / 100, t: t / 100 }));
   if (s.o && !G.over) { G.over = s.o; }
   G.stash = s.st;

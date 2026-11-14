@@ -18,7 +18,7 @@ function newGame(seed) {
     seed, t: 0, tick: 0, clock: 7 * 60, day: 1, phase: 'day', players: [], ents: [], structs: [], drops: [], shots: [], booms: [],
     stash: { cash: 80, wood: 40, scrap: 20, food: 6, meds: 2, grenade: 2, mine: 1, mags: { pistol: [12, 12, 12] }, owned: { machete: 1, pistol: 1 }, upg: {} },
     vh: W.villages.map(() => 0), merchantHostile: false, kills: 0, over: null, nextId: 1, waves: [], spawnQ: [], warn: null,
-    raidAt: -1, fxOut: [], tileDiff: {}, core: null, bench: null, nightN: 0, lootLog: 0, hazards: [], milHostile: false, Q: newQuestState(), frozen: [], away: null,
+    raidAt: -1, fxOut: [], tileDiff: {}, core: null, bench: null, nightN: 0, lootLog: 0, hazards: [], milHostile: false, Q: newQuestState(), frozen: [], away: null, weather: { k: 'clear', i: 0, to: 0, t: 300 },
   };
   const b = W.base;
   // core (2×2) + workbench
@@ -235,6 +235,7 @@ function rollLoot(kind) {
 
 // ── noise ──────────────────────────────────────────────────────────────────
 function makeNoise(x, y, r, src) {
+  if (G.weather && G.weather.k !== 'clear' && G.weather.k !== 'fog') r *= 1 - 0.3 * G.weather.i;
   if (r < 2) return;
   for (const e of G.ents) {
     if (e.cat !== 'mob' || e.target) continue;
@@ -988,7 +989,7 @@ function updateMob(e) {
   if (Math.abs(e.vx) + Math.abs(e.vy) > 0.002) { moveActor(e, e.vx, e.vy); e.vx *= 0.7; e.vy *= 0.7; return; }
   const night = G.phase === 'night';
   if ((G.tick + e.id) % 12 === 0) {
-    const t = perceive(e, (night ? 6.5 : 8) * (d0.low ? 0.7 : 1));
+    const t = perceive(e, (night ? 6.5 : 8) * (d0.low ? 0.7 : 1) * weatherSight());
     if (t) {
       if (!e.target && d0.scream && !e.screamed) scream(e);
       e.target = t; e.seenT = G.t;
@@ -1371,7 +1372,29 @@ function updateStructs() {
 
 // ── day / night ────────────────────────────────────────────────────────────
 function phaseOf(c) { return c >= DAWN && c < DUSK ? 'day' : c >= DUSK && c < NIGHT ? 'dusk' : c >= LATE && c < DAWN ? 'dawn' : 'night'; }
+// weather: clear → rain / fog / storm; rain masks noise, fog and rain shorten sight
+const WEATHER_NAMES = { clear: '맑음', rain: '비', fog: '안개', storm: '폭풍우' };
+function updateWeather() {
+  const w = G.weather || (G.weather = { k: 'clear', i: 0, to: 0, t: 300 });
+  w.t -= MIN_PER_TICK;
+  w.i += (w.to - w.i) * 0.0015;
+  if (w.t <= 0) {
+    const r = SR.f();
+    const k = r < 0.45 ? 'clear' : r < 0.7 ? 'rain' : r < 0.88 ? 'fog' : G.day >= 2 ? 'storm' : 'rain';
+    if (k !== w.k) {
+      w.k = k; w.to = k === 'clear' ? 0 : k === 'storm' ? 1 : SR.r(0.5, 0.95);
+      say({ rain: '비가 내리기 시작합니다 — 발소리가 묻힙니다', fog: '짙은 안개가 깔립니다 — 시야가 좁아집니다', storm: '폭풍우가 몰아칩니다!', clear: '하늘이 개었습니다' }[k], '#a8c8e8', -1, 0);
+    }
+    w.t = SR.r(150, 420);
+  }
+  if (w.k === 'storm' && w.i > 0.5 && SR.chance(0.0025)) {
+    const p = SR.pick(alivePlayers() || []); fx({ k: 'lightning' });
+    if (p && SR.chance(0.3)) { const c = ringCell(SR, p.x, p.y, 7, 16); if (c && W.tile[c.i] !== T.WATER) { addHazard('fire', c.x, c.y, 1.6, 7, 10, 'none'); fx({ k: 'boom', x: c.x, y: c.y, r: 1.2, fire: 1 }); } }
+  }
+}
+const weatherSight = () => { const w = G.weather; if (!w) return 1; return 1 - (w.k === 'fog' ? 0.38 : 0.2) * w.i; };
 function updateClock() {
+  updateWeather();
   G.clock += MIN_PER_TICK;
   if (G.clock >= 1440) G.clock -= 1440;
   const ph = phaseOf(G.clock);

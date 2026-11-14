@@ -286,7 +286,7 @@ function genWorld(seed) {
       if (!inMap(x, y) || dist(x, y, tw.x, tw.y) > tw.r + 8) continue;
       const i = idx(x, y); if (bio[i] === BIO.OCEAN) continue;
       bio[i] = BIO.CITY;
-      if (tile[i] !== T.WATER || dist(x, y, tw.x, tw.y) < 24) tile[i] = hash2(x, y) > 0.82 ? T.DIRT : T.GRASS;
+      if (tile[i] !== T.WATER || dist(x, y, tw.x, tw.y) < 24) tile[i] = fine(x / MW, y / MH) > 0.7 ? T.DIRT : T.GRASS;
     }
   }
   // ── roads: town street grids + highways between towns ──
