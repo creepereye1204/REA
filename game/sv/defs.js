@@ -2,15 +2,33 @@
 // Cell Siege: Nightfall — data tables. Units: tiles and seconds (sim runs at 50 fps).
 
 const TILE = 32, FPS = 50, DT = 1 / FPS;
-const MW = 256, MH = 224;
+const MW = 1024, MH = 1024; // world border (an island in the sea), generated from the seed
 const TAU = Math.PI * 2;
 
 // ── Tiles ──────────────────────────────────────────────────────────────────
 const T = { GRASS: 0, DIRT: 1, ROAD: 2, WALK: 3, FLOOR: 4, WALL: 5, TREE: 6, WATER: 7, CONCRETE: 8,
-            STUMP: 9, ROCK: 10, FENCE: 11, DOOR: 12, SAND: 13, VFLOOR: 14, TENT: 15, CAMPDIRT: 16, CROP: 17, PAD: 18, GRAVE: 19 };
+            STUMP: 9, ROCK: 10, FENCE: 11, DOOR: 12, SAND: 13, VFLOOR: 14, TENT: 15, CAMPDIRT: 16, CROP: 17, PAD: 18, GRAVE: 19,
+            MUD: 20, ASH: 21, DEADTREE: 22, PADDY: 23, BUSH: 24, GRAVEL: 25, RUBBLE: 26, RUIN: 27 };
 const TILE_SOLID = new Uint8Array(32), TILE_OPAQUE = new Uint8Array(32);
-for (const t of [T.WALL, T.TREE, T.WATER, T.ROCK, T.FENCE, T.TENT, T.GRAVE]) TILE_SOLID[t] = 1;
-for (const t of [T.WALL, T.TREE, T.ROCK, T.TENT]) TILE_OPAQUE[t] = 1;
+for (const t of [T.WALL, T.TREE, T.WATER, T.ROCK, T.FENCE, T.TENT, T.GRAVE, T.DEADTREE, T.RUIN]) TILE_SOLID[t] = 1;
+for (const t of [T.WALL, T.TREE, T.ROCK, T.TENT, T.BUSH, T.RUIN]) TILE_OPAQUE[t] = 1; // bushes hide you but can be walked through
+// ground that slows you down
+const TILE_SLOW = new Float32Array(32).fill(1);
+TILE_SLOW[T.MUD] = 0.7; TILE_SLOW[T.PADDY] = 0.65; TILE_SLOW[T.BUSH] = 0.75; TILE_SLOW[T.SAND] = 0.9; TILE_SLOW[T.RUBBLE] = 0.85;
+
+// ── Biomes (Minecraft-style: chosen from elevation / moisture / heat noise) ─────
+const BIO = { PLAINS: 0, FOREST: 1, SWAMP: 2, WASTE: 3, FARM: 4, MOUNTAIN: 5, BEACH: 6, OCEAN: 7, CITY: 8 };
+const BIOME_NAMES = ['평원', '숲', '늪지대', '잿빛 황무지', '농경지', '바위 산악지대', '해안', '바다', '시가지'];
+const BIOME_MOBS = {
+  [BIO.PLAINS]:   [['walker', 5], ['runner', 2, 2], ['crawler', 1], ['hound', 1, 3]],
+  [BIO.FOREST]:   [['walker', 3], ['hound', 2, 2], ['stalker', 1, 3], ['crawler', 2]],
+  [BIO.SWAMP]:    [['toxic', 3, 2], ['crawler', 3], ['walker', 2], ['bloater', 1, 3]],
+  [BIO.WASTE]:    [['spitter', 2, 2], ['brute', 1, 3], ['walker', 3], ['runner', 2], ['toxic', 1, 2]],
+  [BIO.FARM]:     [['walker', 5], ['runner', 1, 2], ['hound', 1, 3]],
+  [BIO.MOUNTAIN]: [['hound', 2], ['walker', 2], ['stalker', 1, 4], ['brute', 1, 5]],
+  [BIO.BEACH]:    [['walker', 3], ['crawler', 2], ['bloater', 1, 2]],
+  [BIO.CITY]:     [['walker', 6], ['runner', 2, 2], ['crawler', 2], ['spitter', 1, 2], ['riot', 1, 3], ['screamer', 1, 4], ['stalker', 1, 5]],
+};
 
 // ── Weapons ────────────────────────────────────────────────────────────────
 // rate/reload in seconds, range in tiles, spread in radians, noise = radius zombies hear it
@@ -39,26 +57,26 @@ const upgCost = (wid, lvl) => {
 // ── Zombies ────────────────────────────────────────────────────────────────
 // speed tiles/s, atk seconds between hits, minNight: first night it shows up in waves
 const MOBS = {
-  walker:   { name: '워커',     hp: 70,  speed: 1.3, dmg: 10, atk: 1.1, reach: 0.95, r: 0.36, body: '#5f8a4b', head: '#8fb070', minNight: 1, w: 10, cash: [1, 3] },
-  crawler:  { name: '크롤러',   hp: 35,  speed: 2.2, dmg: 6,  atk: 0.8, reach: 0.8,  r: 0.3,  body: '#6a6f4a', head: '#9a9d6a', minNight: 1, w: 3,  cash: [0, 2], low: true },
-  runner:   { name: '러너',     hp: 45,  speed: 3.4, dmg: 7,  atk: 0.7, reach: 0.9,  r: 0.33, body: '#8a5a4a', head: '#b98a6a', minNight: 2, w: 5,  cash: [1, 4] },
-  spitter:  { name: '스피터',   hp: 60,  speed: 1.2, dmg: 8,  atk: 1.2, reach: 0.9,  r: 0.36, body: '#4f7a7a', head: '#9fd06a', minNight: 2, w: 3,  cash: [2, 5],
+  walker:   { name: '워커',     hp: 105,  speed: 1.3, dmg: 12, atk: 1.1, reach: 0.95, r: 0.36, body: '#5f8a4b', head: '#8fb070', minNight: 1, w: 10, cash: [1, 3] },
+  crawler:  { name: '크롤러',   hp: 50,  speed: 2.2, dmg: 7,  atk: 0.8, reach: 0.8,  r: 0.3,  body: '#6a6f4a', head: '#9a9d6a', minNight: 1, w: 3,  cash: [0, 2], low: true },
+  runner:   { name: '러너',     hp: 70,  speed: 3.4, dmg: 8,  atk: 0.7, reach: 0.9,  r: 0.33, body: '#8a5a4a', head: '#b98a6a', minNight: 2, w: 5,  cash: [1, 4] },
+  spitter:  { name: '스피터',   hp: 90,  speed: 1.2, dmg: 10,  atk: 1.2, reach: 0.9,  r: 0.36, body: '#4f7a7a', head: '#9fd06a', minNight: 2, w: 3,  cash: [2, 5],
               spit: { range: 6.5, rate: 2.4, dmg: 12, speed: 7 } },
-  brute:    { name: '브루트',   hp: 480, speed: 1.4, dmg: 34, atk: 1.6, reach: 1.2,  r: 0.58, body: '#5a4a6a', head: '#8a7a9a', minNight: 3, w: 2,  cash: [8, 20], structMul: 3, heavy: true },
-  bloater:  { name: '블로터',   hp: 95,  speed: 1.0, dmg: 0,  atk: 1,   reach: 1.0,  r: 0.5,  body: '#8a8a3a', head: '#c0c060', minNight: 4, w: 2,  cash: [3, 8],
+  brute:    { name: '브루트',   hp: 720, speed: 1.4, dmg: 41, atk: 1.6, reach: 1.2,  r: 0.58, body: '#5a4a6a', head: '#8a7a9a', minNight: 3, w: 2,  cash: [8, 20], structMul: 3, heavy: true },
+  bloater:  { name: '블로터',   hp: 140,  speed: 1.0, dmg: 0,  atk: 1,   reach: 1.0,  r: 0.5,  body: '#8a8a3a', head: '#c0c060', minNight: 4, w: 2,  cash: [3, 8],
               explode: { dmg: 80, r: 2.5 } },
-  screamer: { name: '스크리머', hp: 70,  speed: 1.9, dmg: 8,  atk: 1,   reach: 0.9,  r: 0.34, body: '#7a7a8a', head: '#d0d0e0', minNight: 5, w: 1,  cash: [5, 10], scream: true },
-  hound:    { name: '좀비견',   hp: 42,  speed: 4.3, dmg: 9,  atk: 0.6, reach: 0.85, r: 0.3,  body: '#5a4a3a', head: '#7a6a5a', minNight: 3, w: 4,  cash: [0, 3], dog: true },
-  riot:     { name: '진압대 좀비', hp: 260, speed: 1.25, dmg: 16, atk: 1.2, reach: 1.0, r: 0.42, body: '#2a3440', head: '#8fa070', minNight: 4, w: 2, cash: [4, 10], shield: true, heavy: true },
-  toxic:    { name: '독성 좀비', hp: 110, speed: 1.4, dmg: 10, atk: 1.1, reach: 0.95, r: 0.4,  body: '#4a6a2a', head: '#b0e040', minNight: 5, w: 2,  cash: [3, 7], gas: { r: 2.4, t: 5, dps: 14 } },
-  stalker:  { name: '추적자',   hp: 95,  speed: 2.6, dmg: 18, atk: 0.9, reach: 1.0,  r: 0.34, body: '#3a3a44', head: '#6a6a7a', minNight: 6, w: 2,  cash: [5, 12], stealth: true, lunge: true },
-  fiend:    { name: '피의 악마', hp: 1800, speed: 1.7, dmg: 40, atk: 1.4, reach: 1.3, r: 0.62, body: '#9a2f2a', head: '#5a1410', minNight: 99, w: 0, cash: [80, 150],
+  screamer: { name: '스크리머', hp: 105,  speed: 1.9, dmg: 10,  atk: 1,   reach: 0.9,  r: 0.34, body: '#7a7a8a', head: '#d0d0e0', minNight: 5, w: 1,  cash: [5, 10], scream: true },
+  hound:    { name: '좀비견',   hp: 65,  speed: 4.3, dmg: 11,  atk: 0.6, reach: 0.85, r: 0.3,  body: '#5a4a3a', head: '#7a6a5a', minNight: 3, w: 4,  cash: [0, 3], dog: true },
+  riot:     { name: '진압대 좀비', hp: 390, speed: 1.25, dmg: 19, atk: 1.2, reach: 1.0, r: 0.42, body: '#2a3440', head: '#8fa070', minNight: 4, w: 2, cash: [4, 10], shield: true, heavy: true },
+  toxic:    { name: '독성 좀비', hp: 165, speed: 1.4, dmg: 12, atk: 1.1, reach: 0.95, r: 0.4,  body: '#4a6a2a', head: '#b0e040', minNight: 5, w: 2,  cash: [3, 7], gas: { r: 2.4, t: 5, dps: 14 } },
+  stalker:  { name: '추적자',   hp: 140,  speed: 2.6, dmg: 22, atk: 0.9, reach: 1.0,  r: 0.34, body: '#3a3a44', head: '#6a6a7a', minNight: 6, w: 2,  cash: [5, 12], stealth: true, lunge: true },
+  fiend:    { name: '피의 악마', hp: 2700, speed: 1.7, dmg: 48, atk: 1.4, reach: 1.3, r: 0.62, body: '#9a2f2a', head: '#5a1410', minNight: 99, w: 0, cash: [80, 150],
               fire: { range: 8, rate: 1.8, dmg: 35, speed: 6 }, boss: true, heavy: true, por: 'boss_fiend' },
-  broodmother: { name: '산란체', hp: 2600, speed: 0.9, dmg: 30, atk: 1.5, reach: 1.4, r: 0.75, body: '#c8b8a0', head: '#a08878', minNight: 99, w: 0, cash: [100, 160],
+  broodmother: { name: '산란체', hp: 3900, speed: 0.9, dmg: 36, atk: 1.5, reach: 1.4, r: 0.75, body: '#c8b8a0', head: '#a08878', minNight: 99, w: 0, cash: [100, 160],
               spit: { range: 7, rate: 2.0, dmg: 16, speed: 7 }, brood: true, boss: true, heavy: true, por: 'boss_broodmother' },
-  goliath:  { name: '골리앗',   hp: 3400, speed: 1.5, dmg: 48, atk: 1.6, reach: 1.5, r: 0.8,  body: '#d07a2a', head: '#8a6a5a', minNight: 99, w: 0, cash: [120, 200],
+  goliath:  { name: '골리앗',   hp: 5100, speed: 1.5, dmg: 58, atk: 1.6, reach: 1.5, r: 0.8,  body: '#d07a2a', head: '#8a6a5a', minNight: 99, w: 0, cash: [120, 200],
               charge: true, structMul: 6, boss: true, heavy: true, por: 'boss_goliath' },
-  x13:      { name: '실험체 X-13', hp: 2400, speed: 2.4, dmg: 34, atk: 0.9, reach: 1.2, r: 0.5, body: '#7a8a90', head: '#a0b8c0', minNight: 99, w: 0, cash: [150, 220],
+  x13:      { name: '실험체 X-13', hp: 3600, speed: 2.4, dmg: 41, atk: 0.9, reach: 1.2, r: 0.5, body: '#7a8a90', head: '#a0b8c0', minNight: 99, w: 0, cash: [150, 220],
               spit: { range: 8, rate: 1.6, dmg: 20, speed: 9 }, blink: true, boss: true, heavy: true, por: 'boss_x13' },
 };
 
@@ -105,8 +123,10 @@ const STRUCTS = {
   light:      { name: '조명등',    hp: 80,   cost: { scrap: 3 },               block: false, key: '6' },
   barrel:     { name: '폭발 드럼', hp: 1,    cost: { scrap: 5 },               block: true, key: '7' },
   mine:       { name: '지뢰',      hp: 1,    cost: { mine: 1 },                block: false, key: '8' },
+  campfire:   { name: '모닥불 거점', hp: 200, cost: { wood: 12, scrap: 2 }, block: false, key: '9', outpost: true },
 };
-const STRUCT_ORDER = ['wall_wood', 'wall_metal', 'door', 'spikes', 'turret', 'light', 'barrel', 'mine'];
+const STRUCT_ORDER = ['wall_wood', 'wall_metal', 'door', 'spikes', 'turret', 'light', 'barrel', 'mine', 'campfire'];
+const OUTPOST_RADIUS = 7; // you can build around any campfire, anywhere in the world
 const BUILD_RADIUS = 18; // tiles from the core
 
 // ── Items / shop ────────────────────────────────────────────────────────────
@@ -190,6 +210,10 @@ const BUILDING_TYPES = {
   station:   { name: '주유소',   roof: '#c83a2a', floor: 'tile',  conts: ['shelf', 'shelf', 'fridge', 'safe'] },
   farmhouse: { name: '농가',     roof: '#7a4a2a', floor: 'wood',  conts: ['barn', 'barn', 'fridge', 'cabinet'] },
   tower:     { name: '송신소',   roof: '#4a4a4a', floor: 'conc',  conts: ['toolbox', 'desk', 'toolbox'] },
+  apartment: { name: '아파트',   roof: '#8a8a84', floor: 'tile',  conts: ['cabinet', 'fridge', 'cabinet', 'desk', 'medcab', 'cabinet', 'safe', 'fridge'] },
+  mart:      { name: '대형마트', roof: '#2f6a5a', floor: 'tile',  conts: ['shelf', 'shelf', 'shelf', 'fridge', 'fridge', 'shelf', 'shelf', 'safe', 'medcab', 'shelf', 'fridge', 'shelf'] },
+  bunker:    { name: '비밀 벙커', roof: '#3a3f38', floor: 'conc', conts: ['milcrate', 'milcrate', 'ammobox', 'locker', 'medcab', 'safe'] },
+  cabin:     { name: '산장',     roof: '#5a3a24', floor: 'wood',  conts: ['cabinet', 'fridge', 'crate', 'toolbox'] },
 };
 // workbench crafting
 const RECIPES = [
@@ -201,6 +225,6 @@ const RECIPES = [
   { id: 'armor', n: 1, cost: { scrap: 25, parts: 2 } },
 ];
 
-// ── Day clock: minutes of the day per tick. A full day is ~6.5 real minutes. ──
-const MIN_PER_TICK = 1440 / (6.5 * 60 * FPS);
+// ── Day clock: minutes of the day per tick ──
+const MIN_PER_TICK = 1440 / (9 * 60 * FPS); // a full day is 9 real minutes (the world is big)
 const DAWN = 6 * 60, DUSK = 19 * 60, NIGHT = 20 * 60, LATE = 5 * 60;

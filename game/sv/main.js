@@ -3,11 +3,29 @@
 
 function localMove(p, inp) {
   if (p.down || p.dead || G.over) { p.in.moving = false; return; }
+  if (p.veh) return driveMove(p, inp);
   const sprint = inp.sprint && p.stamina > 4 && inp.moving;
-  const sp = 4.4 * (sprint ? 1.55 : 1) * (inp.crouch ? 0.55 : 1);
+  const sp = 4.4 * (sprint ? 1.55 : 1) * (inp.crouch ? 0.55 : 1) * groundSlow(p.x, p.y);
   if (inp.moving) { moveActor(p, inp.mx * sp * DT, inp.my * sp * DT); if (NET.role === 'client') p.walk += 0.25; }
 }
 
+// arcade car handling: steer toward the stick, reverse when pointing backward, slower off-road
+function driveMove(p, inp) {
+  const v = p.veh, cx = Math.floor(p.x), cy = Math.floor(p.y), onRoad = inMap(cx, cy) && (W.tile[idx(cx, cy)] === T.ROAD || W.tile[idx(cx, cy)] === T.CONCRETE || W.tile[idx(cx, cy)] === T.WALK);
+  const top = (inp.sprint ? 16 : 11.5) * (onRoad ? 1 : 0.62 * groundSlow(p.x, p.y));
+  if (inp.moving && v.fuel > 0) {
+    const want = Math.atan2(inp.my, inp.mx);
+    let da = angDiff(v.ang, want);
+    if (Math.abs(da) > 2.3 && v.spd < 2.5) { v.spd = Math.max(-4.5, v.spd - 10 * DT); da = angDiff(v.ang, want + Math.PI); }
+    else v.spd = Math.min(top, v.spd + (v.spd < 0 ? 18 : v.spd > top ? -6 : 7.5) * DT);
+    v.ang += clamp(da, -1, 1) * Math.min(1, Math.abs(v.spd) / 3.5) * 3.4 * DT * Math.sign(v.spd || 1);
+    v.fuel = Math.max(0, v.fuel - Math.abs(v.spd) * DT * 0.045);
+  } else v.spd *= 0.965;
+  if (Math.abs(v.spd) < 0.05) v.spd = 0;
+  const ok = moveActor(p, Math.cos(v.ang) * v.spd * DT, Math.sin(v.ang) * v.spd * DT);
+  if (!ok) { if (Math.abs(v.spd) > 5) { v.hp -= Math.abs(v.spd) * 2.5; V.shake = Math.max(V.shake, Math.abs(v.spd) * 0.6); sfx('thud', p.x, p.y); } v.spd *= -0.25; }
+  p.angle = v.ang; inp.moving = Math.abs(v.spd) > 0.3;
+}
 function step() {
   if (!G || !G.core) return;
   const p = meP();
@@ -15,6 +33,7 @@ function step() {
   if (!(V.paused && NET.role === 'solo')) {
     localMove(p, inp);
     p.in = { fire: inp.fire, use: inp.use, sprint: inp.sprint, crouch: inp.crouch, ax: inp.ax, ay: inp.ay, moving: inp.moving };
+    if (p.veh) { p.in.vs = +p.veh.spd.toFixed(2); p.in.va = +p.veh.ang.toFixed(3); }
     if (NET.role === 'client') {
       p.angle = Math.atan2(inp.ay, inp.ax);
       if (G.tick % 2 === 0 || inp.fire !== V.lastFire) netSend({ k: 'in', x: p.x, y: p.y, in: p.in });
@@ -28,6 +47,7 @@ function step() {
       else if (NET.role !== 'host' || !NET.connected) G.fxOut = [];
     }
     updateGhost(p);
+    if (NET.role !== 'client' && !G.over && G.tick % (FPS * 120) === 0 && G.tick) saveGame(true);
     if (G.over && !V.savedBest) { V.savedBest = true; try { if (G.over.day > bestDays()) localStorage.setItem('nightfall.best', String(G.over.day)); } catch (e) { /* private mode */ } }
   }
 }
@@ -41,9 +61,17 @@ function startSolo() {
   newGame((Math.random() * 2 ** 31) | 0);
   G.tileDiff = {};
   addPlayer(0); V.me = 0;
+  V.fogCv = null; V.fogSeed = null;
   startGame();
   say('1일차 — 낮 동안 물자를 모으고, 밤이 오기 전에 기지로 돌아오세요. (F1 도움말)', '#ffe9a8', -1, 1);
   if (I.touch) say('왼쪽 엄지 이동 · 오른쪽 엄지 조준/사격 · 노란 버튼 = 사용', '#ccc');
+}
+function continueSolo() {
+  netClose(); NET.role = 'solo';
+  V.fogCv = null; V.fogSeed = null;
+  if (!loadGame()) { V.titleMsg = '저장 파일을 읽을 수 없습니다'; G = null; return; }
+  V.me = 0; startGame();
+  say(`${G.day}일차 — 저장한 곳에서 이어합니다.`, '#ffe9a8', -1, 1);
 }
 async function startHost() {
   V.titleMsg = '방을 여는 중…';

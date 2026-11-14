@@ -43,6 +43,15 @@ function drawHud(g) {
     g.fillStyle = c; g.fillRect(16, y, bw * clamp(k, 0, 1), 12);
     txt(g, label, 20, y + 10, '#fff', 10);
   };
+  if (p.veh) { // dashboard
+    const v = p.veh, w = 260, x = VIEW_W / 2 - w / 2, y = VIEW_H - (T_ ? 250 : 140);
+    g.fillStyle = 'rgba(0,0,0,.6)'; roundRect(g, x, y, w, 48, 8); g.fill();
+    txt(g, `${Math.round(Math.abs(v.spd) * 9)} km/h`, x + 12, y + 30, '#fff', 18);
+    const bar = (yy, k, c, l) => { g.fillStyle = '#222'; g.fillRect(x + 110, yy, 130, 9); g.fillStyle = c; g.fillRect(x + 110, yy, 130 * clamp(k, 0, 1), 9); txt(g, l, x + 112, yy + 8, '#fff', 8, 'left', false); };
+    bar(y + 10, v.fuel / 100, v.fuel > 20 ? '#e0b040' : '#e04a3a', `연료 ${v.fuel | 0}%`);
+    bar(y + 28, v.hp / 420, v.hp > 120 ? '#6ab0e0' : '#e04a3a', `차체 ${Math.max(0, v.hp | 0)}`);
+    txt(g, T_ ? '사용 버튼 = 내리기' : '[E] 내리기 · Shift 가속', VIEW_W / 2, y - 6, '#ccc', 10, 'center');
+  }
   statBar(14, p.hp / p.maxHp, p.hp > 35 ? '#4fc26a' : '#e04a3a', `체력 ${Math.ceil(p.hp)}`);
   statBar(30, p.hunger / 100, p.hunger > 25 ? '#d99a3a' : '#e04a3a', `허기 ${Math.ceil(p.hunger)}`);
   statBar(46, p.stamina / 100, p.adrT > 0 ? '#ff9a3a' : '#d8d050', p.adrT > 0 ? '아드레날린!' : `기력 ${Math.ceil(p.stamina)}`);
@@ -105,11 +114,13 @@ function drawHud(g) {
   if (p.in && p.in.crouch) txt(g, '은신 중 (발각 범위 감소)', 16, 80, '#9fd0ff', 11);
 
   // minimap
-  const mmW = small ? 110 : 160, mmH = mmW * MH / MW, mmx = VIEW_W - mmW - 8, mmy = T_ ? (small ? 60 : 40) : VIEW_H - mmH - 8;
+  const mmW = small ? 120 : 176, mmH = mmW, mmx = VIEW_W - mmW - 8, mmy = T_ ? (small ? 60 : 40) : VIEW_H - mmH - 8;
+  const span = 150, mview = { x0: p.x - span / 2, y0: p.y - span / 2, span };
   if (!T_ || true) {
     const my2 = T_ ? mmy + 0 : mmy;
     const mx2 = T_ ? 8 : mmx, myy = T_ ? 140 + (p.in && p.in.crouch ? 12 : 0) : my2;
-    drawMiniMap(g, mx2, myy, mmW, mmH, 1);
+    drawMiniMap(g, mx2, myy, mmW, mmH, 1, mview);
+    const here = placeName(p.x, p.y); txt(g, here, mx2 + mmW / 2, myy + mmH + 13, '#e8e0c8', 11, 'center');
     uiBtn(mx2, myy, mmW, mmH, () => { V.mapOpen = true; });
     if (T_) drawQuestHud(g, 8, myy + mmH + 8, Math.min(250, VIEW_W * 0.42));
   }
@@ -156,24 +167,57 @@ function drawHud(g) {
 }
 function fmtMin(m) { return `${Math.floor(m / 60)}시간 ${Math.floor(m % 60)}분`; }
 function wstatC(w, s) { return wstat(w, s); }
-function drawMiniMap(g, x, y, w, h, alphaEnts) {
+// explored-area fog: one cell per 16×16 tiles, revealed around you as you travel
+const FOG = 16, FW = MW / FOG, FH = MH / FOG;
+function fogCanvas() {
+  if (V.fogSeed !== W.seed || !V.fogCv) {
+    V.fogSeed = W.seed; V.seen = new Uint8Array(FW * FH);
+    V.fogCv = document.createElement('canvas'); V.fogCv.width = FW; V.fogCv.height = FH;
+    const g = V.fogCv.getContext('2d'); g.fillStyle = '#07080b'; g.fillRect(0, 0, FW, FH);
+  }
+  return V.fogCv;
+}
+function revealAround(x, y, r) {
+  const fc = fogCanvas(), g = fc.getContext('2d'), cx = Math.floor(x / FOG), cy = Math.floor(y / FOG);
+  for (let j = cy - r; j <= cy + r; j++) for (let i = cx - r; i <= cx + r; i++) {
+    if (i < 0 || j < 0 || i >= FW || j >= FH || (i - cx) ** 2 + (j - cy) ** 2 > r * r + 1) continue;
+    const k = j * FW + i; if (V.seen[k]) continue;
+    V.seen[k] = 1; g.clearRect(i, j, 1, 1);
+  }
+}
+const seenAt = (x, y) => { fogCanvas(); const i = Math.floor(x / FOG), j = Math.floor(y / FOG); return i >= 0 && j >= 0 && i < FW && j < FH && V.seen[j * FW + i]; };
+// view: { x0, y0, span } in tiles (minimap follows the player); without it the whole world is shown
+function drawMiniMap(g, x, y, w, h, alphaEnts, view) {
   const p = meP();
-  g.fillStyle = 'rgba(0,0,0,.6)'; g.fillRect(x - 2, y - 2, w + 4, h + 4);
-  g.imageSmoothingEnabled = false; g.drawImage(miniMap(), x, y, w, h); g.imageSmoothingEnabled = true;
-  const k = w / MW;
-  const dot = (ox, oy, c, r = 2) => { g.fillStyle = c; g.fillRect(x + ox * k - r / 2, y + oy * k - r / 2, r, r); };
-  for (const v of W.villages) { g.strokeStyle = G.vh[v.id] > 0 ? '#ff5c4c' : '#8fd3ff'; g.lineWidth = 1; g.strokeRect(x + v.x * k, y + v.y * k, v.w * k, v.h * k); }
-  for (const c of W.camps) { g.strokeStyle = '#ff8a5c'; g.strokeRect(x + c.x * k, y + c.y * k, c.w * k, c.h * k); }
-  for (const P of W.pois) { g.strokeStyle = '#d0a0ff'; g.strokeRect(x + P.x * k, y + P.y * k, P.w * k, P.h * k); }
-  if (G.Q) { const ids = trackedQuests(); const t = ids.length && questTarget(ids[0]); if (t) { g.fillStyle = (V.frame >> 4) & 1 ? '#ffd166' : '#a07a20'; g.beginPath(); g.arc(x + t.x * k, y + t.y * k, 4, 0, TAU); g.fill(); } }
+  const x0 = view ? view.x0 : 0, y0 = view ? view.y0 : 0, sw = view ? view.span : MW, sh = view ? view.span * h / w : MH;
+  const k = w / sw;
+  g.fillStyle = 'rgba(0,0,0,.65)'; g.fillRect(x - 2, y - 2, w + 4, h + 4);
+  g.save(); g.beginPath(); g.rect(x, y, w, h); g.clip();
+  g.imageSmoothingEnabled = false;
+  g.drawImage(miniMap(), x - x0 * k, y - y0 * k, MW * k, MH * k);
+  g.imageSmoothingEnabled = true;
+  g.globalAlpha = view ? 0.85 : 0.97; g.drawImage(fogCanvas(), x - x0 * k, y - y0 * k, MW * k, MH * k); g.globalAlpha = 1;
+  const sx = ox => x + (ox - x0) * k, sy = oy => y + (oy - y0) * k;
+  const dot = (ox, oy, c, r = 2) => { g.fillStyle = c; g.fillRect(sx(ox) - r / 2, sy(oy) - r / 2, r, r); };
+  const box = (o, c) => { if (!seenAt(o.x + o.w / 2, o.y + o.h / 2)) return; g.strokeStyle = c; g.lineWidth = 1; g.strokeRect(sx(o.x), sy(o.y), o.w * k, o.h * k); };
+  for (const v of W.villages) box(v, G.vh[v.id] > 0 ? '#ff5c4c' : '#8fd3ff');
+  for (const c of W.camps) box(c, '#ff8a5c');
+  for (const P of W.pois) box(P, P.generic ? 'rgba(208,160,255,.55)' : '#d0a0ff');
+  for (const s of G.structs) if (s.type === 'campfire') dot(s.x, s.y, '#ffb347', 4);
+  if (G.Q) { const ids = trackedQuests(); const t = ids.length && questTarget(ids[0]); if (t) { g.fillStyle = (V.frame >> 4) & 1 ? '#ffd166' : '#a07a20'; g.beginPath(); g.arc(sx(t.x), sy(t.y), 4, 0, TAU); g.fill(); } }
   for (const e of G.ents) {
     if (dist(e.x, e.y, p.x, p.y) > 34 && !(e.kind === 'survivor') && !e.def.shop) continue;
     dot(e.x, e.y, e.cat === 'mob' ? '#e33' : e.kind === 'survivor' ? (e.mode === 'wait' ? '#ffd166' : '#7dff9a') : e.def.shop ? '#ffd166' : e.team === 'bandit' ? '#ff8a5c' : '#8fd3ff', e.cat === 'mob' ? 2 : 3);
   }
   dot(G.core.x, G.core.y, '#7df', 5);
-  for (const q of G.players) if (q && q.joined && !q.dead) dot(q.x, q.y, q === p ? '#fff' : q.color, 4);
-  // view rect
-  g.strokeStyle = 'rgba(255,255,255,.5)'; g.strokeRect(x + V.cam.x / TILE * k, y + V.cam.y / TILE * k, VIEW_W / TILE * k, VIEW_H / TILE * k);
+  for (const q of G.players) if (q && q.joined && !q.dead) {
+    if (q === p) { g.save(); g.translate(sx(q.x), sy(q.y)); g.rotate(q.angle); g.fillStyle = '#fff'; g.beginPath(); g.moveTo(6, 0); g.lineTo(-4, -4); g.lineTo(-2, 0); g.lineTo(-4, 4); g.fill(); g.restore(); }
+    else dot(q.x, q.y, q.color, 4);
+  }
+  if (view) { // label the place you are in
+    g.strokeStyle = 'rgba(255,255,255,.25)'; g.strokeRect(sx(V.cam.x / TILE), sy(V.cam.y / TILE), VIEW_W / TILE * k, VIEW_H / TILE * k);
+  }
+  g.restore();
 }
 function drawBuildBar(g) {
   const S = G.stash, T_ = touchUI();
@@ -202,10 +246,12 @@ function drawUI(g) {
   if (V.panel && V.panel.k === 'journal') drawJournal(g);
   if (V.help) drawHelp(g);
   if (V.paused) {
-    const b = panelBox(g, 360, 230, NET.role === 'solo' ? '일시정지' : '메뉴 (게임은 계속 진행됩니다)');
+    const host = NET.role !== 'client';
+    const b = panelBox(g, 360, host ? 280 : 230, NET.role === 'solo' ? '일시정지' : '메뉴 (게임은 계속 진행됩니다)');
     button(g, b.x + 30, b.y + 60, b.w - 60, 40, '계속하기', () => { V.paused = false; });
     button(g, b.x + 30, b.y + 110, b.w - 60, 40, '도움말', () => { V.help = true; });
-    button(g, b.x + 30, b.y + 160, b.w - 60, 40, '타이틀로 나가기', () => { quitToTitle(); }, { color: '#ff9a8a' });
+    if (host) button(g, b.x + 30, b.y + 160, b.w - 60, 40, '저장하기', () => { saveGame(); V.paused = false; }, { color: '#7dff9a' });
+    button(g, b.x + 30, b.y + (host ? 210 : 160), b.w - 60, 40, host ? '저장하고 타이틀로' : '타이틀로 나가기', () => { if (host) saveGame(true); quitToTitle(); }, { color: '#ff9a8a' });
   }
   if (V.ending) drawEnding(g);
   if (G.over) {
@@ -216,18 +262,19 @@ function drawUI(g) {
   }
 }
 function drawBigMap(g) {
-  const b = panelBox(g, 900, 760, '지도');
-  const w = b.w - 32, h = b.h - 60, k = Math.min(w / MW, h / MH);
+  const b = panelBox(g, 900, 780, '지도 — 탐험한 곳만 보입니다');
+  const w = b.w - 32, h = b.h - 70, k = Math.min(w / MW, h / MH);
   const mx = b.x + (b.w - MW * k) / 2, my = b.y + 46;
   drawMiniMap(g, mx, my, MW * k, MH * k);
-  for (const v of W.villages) txt(g, v.name + (G.vh[v.id] > 0 ? ' (적대)' : ''), mx + (v.x + v.w / 2) * k, my + v.y * k - 3, G.vh[v.id] > 0 ? '#ff6b5c' : '#8fd3ff', 11, 'center');
-  for (const c of W.camps) txt(g, c.name, mx + (c.x + c.w / 2) * k, my + c.y * k - 3, '#ff8a5c', 11, 'center');
-  for (const P of W.pois) txt(g, P.name, mx + (P.x + P.w / 2) * k, my + P.y * k - 3, '#d0a0ff', 11, 'center');
+  const lab = (o, text, col, size) => { if (seenAt(o.x + (o.w || 0) / 2, o.y + (o.h || 0) / 2)) txt(g, text, mx + (o.x + (o.w || 0) / 2) * k, my + o.y * k - 3, col, size, 'center'); };
+  for (const t of W.towns) lab({ x: t.x, y: t.y - t.r * 0.2 }, t.name, '#f0e6c8', 13);
+  for (const v of W.villages) lab(v, v.name + (G.vh[v.id] > 0 ? ' (적대)' : ''), G.vh[v.id] > 0 ? '#ff6b5c' : '#8fd3ff', 11);
+  for (const c of W.camps) lab(c, c.name, '#ff8a5c', 10);
+  for (const P of W.pois) lab(P, P.name, P.generic ? 'rgba(208,160,255,.75)' : '#d0a0ff', P.generic ? 9 : 11);
   if (G.Q) for (const id of trackedQuests().slice(0, 4)) { const t = questTarget(id); if (t) txt(g, '◆ ' + QUESTS[id].title, mx + t.x * k, my + t.y * k + 14, '#ffd166', 10, 'center'); }
-  for (const bd of W.buildings) if (bd.village < 0 && bd.type !== 'house' && bd.type !== 'store') txt(g, bd.name, mx + (bd.x + bd.w / 2) * k, my + (bd.y + bd.h / 2) * k, 'rgba(255,255,255,.7)', 9, 'center', false);
   txt(g, '기지', mx + G.core.x * k, my + G.core.y * k - 6, '#7df', 12, 'center');
-  const p = meP();
-  txt(g, '● 나  ● 동료/구조 대기(노랑)  ● 상인($)  ■ 마을(파랑)  ■ 약탈단 캠프(주황)  ■ 주요 장소(보라)  ◆ 임무 목표', b.x + 16, b.y + b.h - 10, '#aaa', 10, 'left', false);
+  const seen = V.seen ? V.seen.reduce((a, v) => a + v, 0) : 0;
+  txt(g, `탐험 ${(seen / (FW * FH) * 100).toFixed(1)}% · ▲ 나  ● 동료  ■ 마을(파랑)  ■ 약탈단(주황)  ■ 주요 장소(보라)  ◆ 임무 목표  ● 모닥불 거점(주황)`, b.x + 16, b.y + b.h - 10, '#aaa', 10, 'left', false);
   uiBtn(b.x, b.y, b.w, b.h, () => { V.mapOpen = false; });
 }
 function shopNpc() { return V.panel && G.ents.find(e => e.id === V.panel.npc); }
@@ -361,7 +408,9 @@ function drawTitle(g) {
   let by = VIEW_H * 0.2 + (small ? 80 : 104);
   const bh = small ? 40 : 46, gap = small ? 8 : 10;
   if (V.titleMsg) { txt(g, V.titleMsg, VIEW_W / 2, by + 4, '#8fd3ff', 13, 'center'); by += 22; }
-  button(g, bx, by, bw, bh, '혼자 시작', () => startSolo(), { size: 16 }); by += bh + gap;
+  const sv = saveInfo();
+  if (sv) { button(g, bx, by, bw, bh, `이어하기 — ${sv.day}일차 (처치 ${sv.kills})`, () => continueSolo(), { size: 16, color: '#7dff9a' }); by += bh + gap; }
+  button(g, bx, by, bw, bh, sv ? '새로 시작 (저장 덮어씀)' : '혼자 시작', () => startSolo(), { size: sv ? 14 : 16 }); by += bh + gap;
   button(g, bx, by, bw, bh, '친구와 함께 — 방 만들기', () => startHost(), { size: 15 }); by += bh + gap;
   button(g, bx, by, bw, bh, '친구 방 참가 — 코드 입력', () => startJoin(), { size: 15 }); by += bh + gap;
   button(g, bx, by, bw / 2 - 4, bh - 6, '도움말', () => { V.titleHelp = !V.titleHelp; }, { size: 13 });
@@ -579,6 +628,7 @@ const SFX = {
   swish: [600, 0.05, 'noise', 0.02], eat: [500, 0.1, 'triangle', 0.05], buy: [1300, 0.1, 'triangle', 0.06], click: [800, 0.02, 'square', 0.02],
   spit: [300, 0.12, 'sawtooth', 0.04], fireball: [180, 0.2, 'sawtooth', 0.05], scream: [900, 0.6, 'sawtooth', 0.06], thud: [90, 0.08, 'noise', 0.07],
   clang: [500, 0.1, 'square', 0.04], beep: [1800, 0.08, 'square', 0.04], alarm: [880, 0.5, 'square', 0.06], horn: [110, 1.2, 'sawtooth', 0.09], over: [220, 1.0, 'sawtooth', 0.08],
+  door: [70, 0.4, 'noise', 0.14], engine: [55, 0.9, 'sawtooth', 0.08],
 };
 function sfx(name, x, y) {
   if (!actx || sfxBudget > 8 || !SFX[name]) return;

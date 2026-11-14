@@ -98,7 +98,7 @@ function encodeSnap(forPid) {
     st: G.stash, sh: shops,
     P: G.players.map(p => p && { j: p.joined, x: r2(p.x) / 100, y: r2(p.y) / 100, a: r2(p.angle) / 100, hp: p.hp, hu: p.hunger, sta: p.stamina, w: p.wpn, m: p.mag,
                                  rl: p.reloadT, dn: p.down, dd: p.dead, dt: p.downT, up: p.useP, ul: p.useLabel, f: p.flash, ft: p.fireT, cr: p.in.crouch, mv: p.in.moving,
-                                 ar: p.armor | 0, ad: p.adrT > 0 ? 1 : 0 }),
+                                 ar: p.armor | 0, ad: p.adrT > 0 ? 1 : 0, vh: p.veh ? [p.veh.color, r2(p.veh.ang), r2(p.veh.spd), p.veh.fuel | 0, p.veh.hp | 0] : 0 }),
     E, S,
     D: G.drops.map(b => [b.id, r2(b.x), r2(b.y), b.from, dropTop(b)]),
     X: G.shots.map(s => [SHOT_KINDS.indexOf(s.k), r2(s.x), r2(s.y), r2(s.z || 0)]),
@@ -158,6 +158,11 @@ function clientSnap(s) {
     const p = G.players[pid] || (G.players[pid] = makePlayer(pid));
     p.joined = q.j; p.hp = q.hp; p.hunger = q.hu; p.stamina = q.sta; p.wpn = q.w; p.mag = q.m; p.reloadT = q.rl; p.down = q.dn; p.dead = q.dd; p.downT = q.dt;
     p.useP = q.up; p.useLabel = q.ul; p.flash = q.f; p.fireT = q.ft; p.armor = q.ar; p.adrT = q.ad ? 1 : 0;
+    if (q.vh) {
+      if (!p.veh) { p.veh = { id: -1, color: q.vh[0], ang: q.vh[1] / 100, spd: 0, fuel: q.vh[3], hp: q.vh[4] }; p.r = 0.48; }
+      p.veh.fuel = pid === V.me ? Math.min(p.veh.fuel, q.vh[3] + 1) : q.vh[3]; p.veh.hp = q.vh[4]; p.veh.color = q.vh[0];
+      if (pid !== V.me) { p.veh.ang = q.vh[1] / 100; p.veh.spd = q.vh[2] / 100; }
+    } else if (p.veh) { p.veh = null; p.r = 0.3; }
     if (pid !== V.me) {
       if (Math.abs(p.x - q.x) > 0.01 || Math.abs(p.y - q.y) > 0.01) p.walk += 0.6;
       p.tx = q.x; p.ty = q.y; p.angle = q.a; p.in.crouch = q.cr; p.in.moving = q.mv;

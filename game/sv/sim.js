@@ -18,7 +18,7 @@ function newGame(seed) {
     seed, t: 0, tick: 0, clock: 7 * 60, day: 1, phase: 'day', players: [], ents: [], structs: [], drops: [], shots: [], booms: [],
     stash: { cash: 80, wood: 40, scrap: 20, food: 6, meds: 2, grenade: 2, mine: 1, mags: { pistol: [12, 12, 12] }, owned: { machete: 1, pistol: 1 }, upg: {} },
     vh: W.villages.map(() => 0), merchantHostile: false, kills: 0, over: null, nextId: 1, waves: [], spawnQ: [], warn: null,
-    raidAt: -1, fxOut: [], tileDiff: {}, core: null, bench: null, nightN: 0, lootLog: 0, hazards: [], milHostile: false, Q: newQuestState(),
+    raidAt: -1, fxOut: [], tileDiff: {}, core: null, bench: null, nightN: 0, lootLog: 0, hazards: [], milHostile: false, Q: newQuestState(), frozen: [], away: null,
   };
   const b = W.base;
   // core (2×2) + workbench
@@ -38,8 +38,10 @@ function newGame(seed) {
   }
   for (const s of W.npcSpawns) spawnFromDef(s);
   spawnMerchant();
-  for (let k = 0; k < 8; k++) spawnSurvivor();
-  for (let k = 0; k < 80; k++) spawnDayZombie();
+  for (let k = 0; k < 14; k++) spawnSurvivor();
+  G.players[0] = makePlayer(0); // activation needs someone to measure distance from; main.js replaces it
+  activation(true);
+  G.players = [];
   startQuest('m1', true);
   return G;
 }
@@ -61,7 +63,7 @@ function newEnt(o) { o.id = G.nextId++; o.flash = 0; o.walk = 0; o.vx = 0; o.vy 
 
 function spawnMob(kind, x, y, wave, o = {}) {
   const d = MOBS[kind];
-  const hpMul = d.boss ? 1 + Math.max(0, G.day - 1) * 0.03 : 1 + Math.max(0, G.day - 1) * 0.06;
+  const hpMul = d.boss ? 1 + Math.max(0, G.day - 1) * 0.05 : 1 + Math.max(0, G.day - 1) * 0.09;
   return newEnt({ cat: 'mob', kind, def: d, team: 'zombie', x, y, r: d.r, angle: SR.r(0, TAU), hp: d.hp * hpMul, maxHp: d.hp * hpMul,
                   speed: d.speed * SR.r(0.9, 1.1), state: 'wander', target: null, seenT: -99, atkT: 0, spitT: SR.r(0, 2), wave: !!wave,
                   wanderT: 0, wx: 0, wy: 0, stuckT: 0, invest: null, screamed: false, tag: o.tag || null, home: o.home || null, skillT: SR.r(2, 4), dashT: 0 });
@@ -110,21 +112,6 @@ function spawnSurvivor() {
   h.wpn = SR.pick(['pistol', 'pistol', 'smg', 'shotgun']); h.mag = WEAPONS[h.wpn].mag; h.hunger = 0;
   return h;
 }
-function spawnDayZombie() {
-  const b = W.base;
-  for (let k = 0; k < 30; k++) {
-    const p = randomFreeCell(SR, 2, 2, MW - 2, MH - 2);
-    if (!p || dist(p.x, p.y, b.cx, b.cy) < 26) continue;
-    if (G.players.some(pl => pl && dist(p.x, p.y, pl.x, pl.y) < 18)) continue;
-    if (W.bldAt[idx(Math.floor(p.x), Math.floor(p.y))] >= 0 && W.buildings[W.bldAt[idx(Math.floor(p.x), Math.floor(p.y))]].village >= 0) continue;
-    if (W.villages.some(v => p.x > v.x - 2 && p.x < v.x + v.w + 2 && p.y > v.y - 2 && p.y < v.y + v.h + 2)) continue;
-    if (G.day >= 3 && SR.chance(0.08)) { for (let n = 0; n < 3 + SR.i(3); n++) spawnMob('hound', p.x + SR.r(-1, 1), p.y + SR.r(-1, 1), false); return null; }
-    const kinds = ['walker', 'walker', 'walker', 'crawler', ...(G.day >= 2 ? ['runner'] : []), ...(G.day >= 3 ? ['spitter', 'toxic'] : []), ...(G.day >= 5 ? ['riot', 'stalker'] : [])];
-    return spawnMob(SR.pick(kinds), p.x, p.y, false);
-  }
-  return null;
-}
-
 // ── structures ──────────────────────────────────────────────────────────────
 function addStruct(type, cells, def) {
   def = def || STRUCTS[type];
@@ -163,7 +150,8 @@ function destroyStruct(s) {
 function canPlace(type, cell) {
   if (cell < 0 || cell >= MW * MH) return false;
   const x = cellX(cell), y = cellY(cell);
-  if (dist(x + 0.5, y + 0.5, G.core.x, G.core.y) > BUILD_RADIUS) return false;
+  if (type !== 'campfire' && dist(x + 0.5, y + 0.5, G.core.x, G.core.y) > BUILD_RADIUS && !G.structs.some(s => s.type === 'campfire' && dist(s.x, s.y, x + 0.5, y + 0.5) <= OUTPOST_RADIUS)) return false;
+  if (type === 'campfire' && G.structs.some(s => s.type === 'campfire' && dist(s.x, s.y, x + 0.5, y + 0.5) < 20)) return false;
   if (W.mb[cell] & (MB_TERRAIN | MB_OBJ)) return false;
   if (W.structAt[cell] || W.tile[cell] === T.WATER) return false;
   if (STRUCTS[type].block) {
@@ -261,6 +249,7 @@ function damage(e, dmg, src, kx = 0, ky = 0) {
     if (e.down || G.over) return;
     if (src && src.team === 'player') dmg *= 0.5;
     if (e.adrT > 0) dmg *= 0.8;
+    if (e.veh) { e.veh.hp -= dmg * 0.7; dmg *= 0.3; if (e.veh.hp <= 0) wreckCar(e); }
     if (e.armor > 0) { const a = Math.min(e.armor, dmg * 0.5); e.armor -= a; dmg -= a; if (e.armor <= 0) { e.armor = 0; say('방탄조끼가 망가졌습니다', '#ffb36b', e.pid); autoArmor(e); } }
     e.hp -= dmg; e.flash = 5;
     fx({ k: 'hurt', pid: e.pid, x: e.x, y: e.y });
@@ -353,6 +342,7 @@ function dropBag(x, y, items, from) {
 
 function downPlayer(p) {
   p.hp = 0;
+  if (p.veh) exitCar(p, true);
   const others = G.players.filter(q => q && q !== p && q.joined && !q.dead && !q.down);
   if (!others.length) { gameOver('dead'); return; }
   p.down = true; p.downT = 45; p.reloadT = 0;
@@ -477,6 +467,7 @@ function updatePlayer(p) {
   if (p.in.moving) p.walk += 0.25;
   p.angle = Math.atan2(p.in.ay, p.in.ax) || p.angle;
 
+  if (p.veh) { updateDriving(p); p.prevFire = p.in.fire; p.useT = 0; p.useP = 0; return; }
   // weapon
   const wid = p.wpn, w = WEAPONS[wid];
   if (p.fireT > 0) p.fireT -= DT;
@@ -501,6 +492,7 @@ function updatePlayer(p) {
       if (p.useKey !== it.key) { p.useKey = it.key; p.useT = 0; }
       p.useT += DT; p.useP = Math.min(1, p.useT / it.time); p.useLabel = it.label;
       if (it.steal && G.tick % 8 === 0) checkWitness(p, it);
+      if (it.kind === 'cont') lootTension(p, it);
       if (p.useT >= it.time) { completeInteract(p, it); p.useT = 0; }
     } else { p.useT = 0; p.useKey = null; p.useP = 0; }
   } else { p.useT = 0; p.useKey = null; p.useP = 0; }
@@ -532,7 +524,7 @@ function finishReload(p) {
 
 // ── interaction (shared by host and guest so both see the same prompt) ──────
 function findInteract(p, S, onlyInstant) {
-  if (!p || p.down || p.dead) return null;
+  if (!p || p.down || p.dead || p.veh) return null;
   let best = null, bs = 1e9;
   const consider = (o, d) => {
     if (onlyInstant && !o.instant) return;
@@ -563,22 +555,29 @@ function findInteract(p, S, onlyInstant) {
     if (!inMap(xx, yy)) continue;
     const i = idx(xx, yy);
     const c = W.contAt[i];
+    if (c && c.looted && c.drive && !onlyInstant) {
+      const d = Math.max(0, dist(p.x, p.y, xx + 0.5, yy + 0.5) - 0.5);
+      if (d < 1.1) consider({ key: 'dv' + c.id, kind: 'drive', c, x: c.x, y: c.y, time: 1.2, label: c.fuel > 5 ? `운전하기 (연료 ${c.fuel | 0}%)` : '시동 걸기 — 연료 1 사용' }, d);
+    }
     if (c && !c.looted) {
       const d = Math.max(0, dist(p.x, p.y, xx + 0.5, yy + 0.5) - 0.5);
       if (d < 1.1) {
         const steal = c.village >= 0 && !(S.vh[c.village] > 0 && villageEmpty(S, c.village));
         const CD = CONTAINERS[c.kind];
-        consider({ key: 'c' + c.id, kind: 'cont', c, x: c.x, y: c.y, time: CD.time * (steal && p.in.crouch ? 1.3 : 1), steal, label: steal ? `${CD.name} 훔치기 (들키면 전투!)` : `${CD.name} 뒤지기` }, d);
+        consider({ key: 'c' + c.id, kind: 'cont', c, x: c.x, y: c.y, time: CD.time * 2.3 * (steal && p.in.crouch ? 1.3 : 1), steal, label: steal ? `${CD.name} 훔치기 (들키면 전투!)` : `${CD.name} 뒤지기 — 소리가 납니다` }, d);
       }
     }
-    if (W.tile[i] === T.TREE) {
+    const tt = W.tile[i], G_ = GATHER[tt];
+    if (G_) {
       const d = dist(p.x, p.y, xx + 0.5, yy + 0.5) - 0.5;
-      if (d < 0.9) consider({ key: 't' + i, kind: 'tree', i, x: xx + 0.5, y: yy + 0.5, time: 2.2, label: '나무 베기 (목재)' }, d + 0.6);
+      if (d < 0.9) consider({ key: 't' + i, kind: 'gather', i, x: xx + 0.5, y: yy + 0.5, time: G_.time, label: G_.label }, d + 0.6);
     }
     const s = W.structAt[i];
     if (s && s.type !== 'mine') {
       const d = dist(p.x, p.y, xx + 0.5, yy + 0.5) - 0.5;
       if (d > 1.0) continue;
+      if (s.type === 'campfire') consider({ key: 'tv' + s.id, kind: 'travel', to: 'base', x: s.x, y: s.y, time: 2, label: '기지로 이동 (식량 1)' }, d);
+      if (s.type === 'core' && s.hp >= s.maxHp) { const cf = S.structs.filter(q => q.type === 'campfire').pop(); if (cf) consider({ key: 'tvc', kind: 'travel', to: cf.id, x: s.x, y: s.y, time: 2, label: '최근 모닥불 거점으로 이동 (식량 1)' }, d + 0.2); }
       if (s.type === 'bench') consider({ key: 'bench', kind: 'bench', x: s.x, y: s.y, ui: 'bench', label: '작업대 — 무기 강화 · 제작' }, d);
       else if (s.type === 'radio') consider({ key: 'radio', kind: 'talk', npc: 'radio', x: s.x, y: s.y, ui: 'talk', label: '무전기' }, d);
       else if (s.type === 'gate') continue;
@@ -612,6 +611,143 @@ function interactTap(p) {
     else { e.mode = 'follow'; e.follow = p.pid; say(`${nm}: 따라가겠습니다.`, '#cfe8ff', p.pid); }
   }
 }
+// ── vehicles: looted cars that still run can be driven (fuel, ramming, noise) ──
+function enterCar(p, c) {
+  for (const k of c.cells) { W.contAt[k] = null; updateCellMB(k); }
+  c.gone = true; flowBaseDirty = true;
+  p.veh = { id: c.id, color: c.color || "#5a6a8a", fuel: c.fuel || 0, spd: 0, ang: c.horiz ? 0 : -Math.PI / 2, hp: c.hp || 420 };
+  p.x = c.x; p.y = c.y; p.r = 0.48;
+  fx({ k: 'contgone', id: c.id }); fx({ k: 'tp', pid: p.pid, x: p.x, y: p.y });
+  sfxAt('engine', p.x, p.y);
+  say('시동을 걸었습니다 — 이동키로 운전, [E] 내리기. 소리가 큽니다!', '#cfe8ff', p.pid);
+}
+function exitCar(p, force) {
+  const v = p.veh; if (!v) return true;
+  const c = W.conts[v.id];
+  const horiz = Math.abs(Math.cos(v.ang)) > Math.abs(Math.sin(v.ang));
+  const free = i => !W.mb[i] && !W.contAt[i];
+  for (const [ox, oy] of [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [2, 0], [0, 2], [-2, 0], [0, -2]]) {
+    const x = Math.floor(p.x - (horiz ? 0.5 : 0)) + ox, y = Math.floor(p.y - (horiz ? 0 : 0.5)) + oy;
+    if (!inMap(x, y) || !inMap(x + 1, y + 1)) continue;
+    const a = idx(x, y), b = horiz ? idx(x + 1, y) : idx(x, y + 1);
+    if (!free(a) || !free(b)) continue;
+    const spots = horiz ? [[x + 1, y + 1.5], [x + 1, y - 0.5], [x - 0.5, y + 0.5], [x + 2.5, y + 0.5]] : [[x + 1.5, y + 1], [x - 0.5, y + 1], [x + 0.5, y - 0.5], [x + 0.5, y + 2.5]];
+    const sp = spots.find(([sx, sy]) => inMap(Math.floor(sx), Math.floor(sy)) && !cellBlocked(idx(Math.floor(sx), Math.floor(sy)), 'player'));
+    if (!sp) continue;
+    c.cells = [a, b]; c.horiz = horiz; c.x = horiz ? x + 1 : x + 0.5; c.y = horiz ? y + 0.5 : y + 1; c.fuel = v.fuel; c.hp = v.hp; c.gone = false;
+    for (const k of c.cells) { W.contAt[k] = c; updateCellMB(k); }
+    flowBaseDirty = true;
+    p.veh = null; p.r = 0.3; p.x = sp[0]; p.y = sp[1];
+    fx({ k: 'contmove', id: c.id, cells: c.cells, x: c.x, y: c.y, horiz, fuel: c.fuel });
+    fx({ k: 'tp', pid: p.pid, x: p.x, y: p.y });
+    return true;
+  }
+  if (force) { p.veh = null; p.r = 0.3; return true; }
+  say('여기서는 내릴 수 없습니다 — 넓은 곳에 세우세요', '#ff9a8a', p.pid);
+  return false;
+}
+function wreckCar(p) {
+  const v = p.veh; p.veh = null; p.r = 0.3;
+  say('차량이 폭발합니다!', '#ff5c4c', -1, 1);
+  explode(p.x, p.y, 70, 2.6, null);
+  fx({ k: 'smoke', x: p.x, y: p.y });
+  return v;
+}
+function updateDriving(p) {
+  const v = p.veh;
+  if (p.pid !== V.me && p.in.vs !== undefined) { v.spd = p.in.vs; v.ang = p.in.va; }
+  if (p.in.use && !p.useLatch) { p.useLatch = true; exitCar(p); return; }
+  if (!p.in.use) p.useLatch = false;
+  const sp = Math.abs(v.spd);
+  if (sp > 3) {
+    const ca = Math.cos(v.ang), sa = Math.sin(v.ang);
+    for (const e of G.ents) {
+      if (e.dead || (e.team === 'player' && e.cat !== 'mob') || Math.abs(e.x - p.x) > 1.6 || Math.abs(e.y - p.y) > 1.6) continue;
+      if (dist(e.x, e.y, p.x, p.y) > 0.55 + e.r || (e.carT || 0) > G.t) continue;
+      e.carT = G.t + 0.35;
+      damage(e, sp * (e.def.heavy ? 4 : 9), p, ca, sa);
+      if (!e.dead) { e.vx += ca * sp * 0.03; e.vy += sa * sp * 0.03; }
+      v.hp -= e.def.heavy ? 30 : 5; v.spd *= e.def.heavy ? 0.3 : 0.85;
+      sfxAt('thud', e.x, e.y); fx({ k: 'blood', x: e.x, y: e.y, z: 1 });
+    }
+  }
+  if (G.tick % 20 === 0 && sp > 0.5) makeNoise(p.x, p.y, 8 + sp, p);
+  if (v.hp <= 0) wreckCar(p);
+}
+// Gathering, Minecraft-style: anything natural can be broken down for resources
+const GATHER = {
+  [T.TREE]:     { to: T.STUMP, time: 2.4, label: '나무 베기 (목재)', give: [['wood', 4, 6, 1]], sfx: 'chop', noise: 5 },
+  [T.DEADTREE]: { to: T.STUMP, time: 1.6, label: '고목 베기 (목재)', give: [['wood', 2, 4, 1]], sfx: 'chop', noise: 5 },
+  [T.ROCK]:     { to: T.GRAVEL, time: 3.4, label: '바위 깨기 (고철·광석)', give: [['scrap', 2, 4, 1], ['parts', 1, 1, 0.08], ['gold', 1, 1, 0.015]], sfx: 'thud', noise: 7 },
+  [T.BUSH]:     { to: T.GRASS, time: 1.2, label: '덤불 뒤지기 (열매·약초)', give: [['food', 1, 1, 0.45], ['meds', 1, 1, 0.06], ['wood', 1, 1, 0.5]], sfx: 'swish', noise: 2 },
+  [T.RUIN]:     { to: T.RUBBLE, time: 3.0, label: '잔해 해체 (고철·부품)', give: [['scrap', 3, 6, 1], ['parts', 1, 1, 0.25]], sfx: 'thud', noise: 8 },
+  [T.RUBBLE]:   { to: T.DIRT, time: 1.4, label: '잔해 뒤지기', give: [['scrap', 1, 2, 0.8], ['cash', 2, 10, 0.25]], sfx: 'swish', noise: 3 },
+  [T.CROP]:     { to: T.DIRT, time: 1.0, label: '작물 수확 (식량)', give: [['food', 1, 2, 0.8]], sfx: 'swish', noise: 1 },
+};
+// Looting is loud and slow. Every container rolls once for something to go wrong while you are in it:
+// the dead push in through the door, something was hiding inside, a car alarm, or the owner comes home.
+function lootTension(p, it) {
+  const c = it.c;
+  if (G.tick % 25 === 0) makeNoise(p.x, p.y, p.in.crouch ? 3 : 5.5, p);
+  if (c.ev === undefined) {
+    const bi = W.bldAt[idx(Math.floor(p.x), Math.floor(p.y))], b = bi >= 0 ? W.buildings[bi] : null;
+    const dark = G.phase !== 'day' ? 0.15 : 0, lvl = Math.min(0.2, G.day * 0.02);
+    const r = SR.f();
+    c.ev = null;
+    if (c.village >= 0) { if (it.steal && b && r < 0.4) c.ev = { k: 'owner', at: SR.r(0.2, 0.55), b }; }
+    else if (b) { if (r < 0.12) c.ev = { k: 'closet', at: SR.r(0.3, 0.8) }; else if (r < 0.42 + dark + lvl) c.ev = { k: 'breakin', at: SR.r(0.15, 0.5), b }; }
+    else if (c.kind === 'car') { if (r < 0.22 + lvl) c.ev = { k: 'alarm', at: SR.r(0.1, 0.6) }; }
+    else if (r < 0.2 + dark) c.ev = { k: 'pack', at: SR.r(0.2, 0.6) };
+  }
+  const ev = c.ev;
+  if (!ev || ev.done || p.useP < ev.at) return;
+  ev.done = true;
+  const lure = (e, hold) => { e.target = p; e.seenT = G.t + (hold || 8); };
+  switch (ev.k) {
+    case 'breakin': {
+      const b = ev.b, door = SR.pick(b.doors);
+      const ox = door[1] === b.y ? 0 : door[1] === b.y + b.h - 1 ? 0 : door[0] === b.x ? -1 : 1, oy = door[1] === b.y ? -1 : door[1] === b.y + b.h - 1 ? 1 : 0;
+      const n = 2 + SR.i(2) + (G.day >= 4 ? 1 : 0) + (G.phase !== 'day' ? 1 : 0);
+      const pool = BIOME_MOBS[W.biome[idx(door[0], door[1])]] || BIOME_MOBS[BIO.CITY];
+      for (let k = 0; k < n; k++) {
+        const d = 2 + k * 0.7, x = door[0] + 0.5 + ox * d + SR.r(-0.6, 0.6), y = door[1] + 0.5 + oy * d + SR.r(-0.6, 0.6);
+        if (!inMap(Math.floor(x), Math.floor(y)) || blockedAt(x, y, 'zombie')) continue;
+        const ok = pool.filter(m => (m[2] || 0) <= G.day && m[0] !== 'hound');
+        lure(spawnMob(SR.pick(ok)[0], x, y, false), 12);
+      }
+      say('쿵… 쿵… 문 쪽에서 무언가 밀고 들어옵니다!', '#ff7a5c', p.pid, 1); sfxAt('door', door[0] + 0.5, door[1] + 0.5);
+      fx({ k: 'alarmping', x: door[0] + 0.5, y: door[1] + 0.5 });
+      break;
+    }
+    case 'closet': {
+      const a = SR.r(0, TAU), x = c.x + Math.cos(a) * 0.9, y = c.y + Math.sin(a) * 0.9;
+      const e = spawnMob(G.day >= 3 && SR.chance(0.4) ? 'stalker' : SR.pick(['walker', 'crawler']), blockedAt(x, y, 'zombie') ? p.x - Math.cos(p.angle) : x, blockedAt(x, y, 'zombie') ? p.y - Math.sin(p.angle) : y, false);
+      lure(e); e.atkT = 0.4; e.revealT = 3;
+      say('안에 숨어 있던 놈이 튀어나왔다!', '#ff5c4c', p.pid, 1); sfxAt('scream', c.x, c.y); fx({ k: 'hurt', pid: p.pid });
+      p.useT = 0; p.useKey = null; p.useP = 0;
+      break;
+    }
+    case 'alarm': {
+      say('삐용삐용! 차량 경보가 울립니다 — 근처 좀비들이 몰려옵니다!', '#ff5c4c', p.pid, 1);
+      sfxAt('alarm', c.x, c.y); makeNoise(c.x, c.y, 30, null);
+      for (let k = 0; k < 4 + SR.i(4); k++) { const q = ringCell(SR, c.x, c.y, 14, 24); if (q) lure(spawnMob(SR.pick(['walker', 'walker', 'runner', 'crawler']), q.x, q.y, false), 14); }
+      break;
+    }
+    case 'pack': {
+      const n = 2 + SR.i(3);
+      for (let k = 0; k < n; k++) { const q = ringCell(SR, p.x, p.y, 12, 18); if (q) lure(spawnMob(G.day >= 2 ? 'hound' : 'walker', q.x, q.y, false), 10); }
+      say('으르렁… 소리를 듣고 무언가 다가옵니다', '#ffb36b', p.pid);
+      break;
+    }
+    case 'owner': {
+      const b = ev.b, door = b.doors[0];
+      const h = spawnHuman('villager', door[0] + 0.5, door[1] + 0.5 + (door[1] === b.y ? -1.5 : 1.5), { village: c.village });
+      h.goto = { x: c.x, y: c.y, t: G.t + 14 }; h.angle = Math.atan2(c.y - h.y, c.x - h.x);
+      say('발소리… 집주인이 돌아오고 있습니다! 빨리 끝내거나 숨으세요', '#ffb36b', p.pid, 1); sfxAt('door', door[0] + 0.5, door[1] + 0.5);
+      break;
+    }
+  }
+}
 function completeInteract(p, it) {
   const S = G.stash;
   switch (it.kind) {
@@ -627,14 +763,36 @@ function completeInteract(p, it) {
       if (it.steal) checkWitness(p, it, true);
       break;
     }
-    case 'tree': {
-      W.tile[it.i] = T.STUMP; G.tileDiff[it.i] = T.STUMP; updateCellMB(it.i); flowBaseDirty = true;
-      fx({ k: 'tile', i: it.i, v: T.STUMP });
-      giveItem('wood', 4 + SR.i(3), p.pid, it.x, it.y); sfxAt('chop', it.x, it.y); makeNoise(it.x, it.y, 5, p);
+    case 'gather': {
+      const g = GATHER[W.tile[it.i]]; if (!g) break;
+      W.tile[it.i] = g.to; G.tileDiff[it.i] = g.to; updateCellMB(it.i); flowBaseDirty = true;
+      fx({ k: 'tile', i: it.i, v: g.to });
+      for (const [id, a, b, ch] of g.give) if (SR.chance(ch)) giveItem(id, a + SR.i(b - a + 1), p.pid, it.x, it.y);
+      sfxAt(g.sfx, it.x, it.y); makeNoise(it.x, it.y, g.noise, p);
       p.useKey = null;
       break;
     }
     case 'trigger': useTrigger(p, it.tr); p.useKey = null; break;
+    case 'drive': {
+      const c = it.c; p.useKey = null;
+      if (!(c.fuel > 5)) {
+        if ((S.fuel || 0) < 1) { say('연료가 필요합니다 — 주유기·차량에서 구하거나 상인에게 사세요', '#ff9a8a', p.pid); break; }
+        S.fuel--; c.fuel = 100;
+      }
+      enterCar(p, c);
+      break;
+    }
+    case 'travel': {
+      p.useKey = null;
+      if (G.phase === 'night') { say('밤에는 이동할 수 없습니다 — 길이 너무 위험합니다', '#ff9a8a', p.pid); break; }
+      if (S.food < 1) { say('식량이 부족합니다 (여정에 식량 1 필요)', '#ff9a8a', p.pid); break; }
+      const dst = it.to === 'base' ? { x: G.core.x + 0.5, y: G.core.y + 2.5 } : (() => { const cf = G.structs.find(q => q.id === it.to); return cf && { x: cf.x, y: cf.y + 1.2 }; })();
+      if (!dst) break;
+      S.food--; G.clock = Math.min(G.clock + 60, DUSK - 1); // the trip takes an hour
+      p.x = dst.x; p.y = dst.y; fx({ k: 'tp', pid: p.pid, x: p.x, y: p.y });
+      say('먼 길을 돌아 도착했습니다 (1시간 경과)', '#cfe8ff', p.pid); sfxAt('place', p.x, p.y);
+      break;
+    }
     case 'turret': if (S.scrap >= 5) { S.scrap -= 5; it.s.ammo = Math.min(400, it.s.ammo + 100); sfxAt('reload', it.s.x, it.s.y); } else say('고철이 부족합니다', '#ff9a8a', p.pid); break;
     case 'repair': {
       const s = it.s, core = s.type === 'core', metal = s.type === 'wall_metal' || s.type === 'turret';
@@ -772,9 +930,11 @@ function doCmd(pid, c) {
 function buyPrice(e, item) { const rep = e && e.village >= 0 && G.Q ? G.Q.rep[e.village] || 0 : 0; return Math.max(1, Math.round(priceOf(item) * (1 - 0.08 * rep))); }
 
 // ── mobs ───────────────────────────────────────────────────────────────────
+function groundSlow(x, y) { const cx = Math.floor(x), cy = Math.floor(y); return inMap(cx, cy) ? TILE_SLOW[W.tile[idx(cx, cy)]] : 1; }
 function stepToward(e, tx, ty, sp) {
   const dx = tx - e.x, dy = ty - e.y, d = Math.hypot(dx, dy);
   if (d < 0.01) return true;
+  sp *= groundSlow(e.x, e.y);
   const s = Math.min(sp * DT, d);
   const before = e.x + e.y;
   const ok = moveActor(e, dx / d * s, dy / d * s);
@@ -868,9 +1028,15 @@ function updateMob(e) {
     if (e.stuckT > 1.5) { const r = flowMove(e, flowBase, sp); if (r.struct) attackStruct(e, r.struct); }
     return;
   }
+  if (e.hunt !== undefined) { // a night horde that tracks a player by scent
+    const p = G.players[e.hunt];
+    if (p && p.joined && !p.dead && !p.down) { e.target = p; e.seenT = G.t; return; }
+    e.hunt = undefined;
+  }
   if ((night || e.wave) && !e.home) {
     const r = flowMove(e, flowBase, sp);
     if (r.struct) return attackStruct(e, r.struct);
+    if (r.lost && e.wave) { stepToward(e, G.core.x, G.core.y, sp); return; }
     if (!r.lost && !r.arrived) return;
   }
   if (e.home && !e.invest && dist(e.x, e.y, e.home.x, e.home.y) > e.home.r) { stepToward(e, e.home.x, e.home.y, sp * 0.6); if (e.stuckT > 2) { e.x = e.home.x; e.y = e.home.y; e.stuckT = 0; } return; }
@@ -1016,6 +1182,10 @@ function updateHuman(e) {
     const p = G.players.find(q => q && q.joined && !q.dead && dist(q.x, q.y, e.x, e.y) < 7);
     if (p) { const a = Math.atan2(e.y - p.y, e.x - p.x); pathTo(e, e.x + Math.cos(a) * 5, e.y + Math.sin(a) * 5, sp); return; }
   }
+  if (e.goto) {
+    if (G.t > e.goto.t || dist(e.x, e.y, e.goto.x, e.goto.y) < 1.2) { e.goto = null; e.wanderT = 0; }
+    else { pathTo(e, e.goto.x, e.goto.y, sp * 0.75); return; }
+  }
   // idle roles
   if (e.kind === 'elder') { if (dist(e.x, e.y, e.home.x, e.home.y) > 0.5) pathTo(e, e.home.x, e.home.y, sp); else faceNearestPlayer(e); return; }
   switch (e.team === 'player' && e.mode !== 'idle' ? e.mode : e.team) {
@@ -1050,7 +1220,7 @@ function updateHuman(e) {
     }
     case 'cult': return wanderIn(e, poiOf('church'), sp * 0.45);
     case 'merchant': {
-      if (G.phase !== 'day' && G.phase !== 'dawn') { pathTo(e, W.base.cx + 0.5, 0.5, sp); if (e.y < 2) { e.dead = true; } return; }
+      if (G.phase !== 'day' && G.phase !== 'dawn') { pathTo(e, W.base.cx + 0.5, W.base.cy - 40, sp); if (e.y < W.base.cy - 30 && !G.players.some(p => p && dist(p.x, p.y, e.x, e.y) < 16)) e.dead = true; return; }
       if (dist(e.x, e.y, e.home.x, e.home.y) > 0.5) pathTo(e, e.home.x, e.home.y, sp); else faceNearestPlayer(e);
       return;
     }
@@ -1151,6 +1321,7 @@ function updateShots() {
 function updateStructs() {
   for (const s of G.structs.slice()) {
     s.flash = Math.max(0, s.flash - 1);
+    if (s.type === 'campfire' && G.tick % 25 === 0) for (const p of G.players) if (p && p.joined && !p.dead && !p.down && dist(p.x, p.y, s.x, s.y) < 3.5) p.hp = Math.min(p.maxHp, p.hp + 1.5);
     if (s.type === 'turret') {
       if (s.fireT > 0) s.fireT -= DT;
       if ((G.tick + s.id) % 6 === 0) {
@@ -1216,18 +1387,34 @@ function updateClock() {
 }
 function startNight() {
   const n = ++G.nightN;
-  const total = Math.min(190, Math.round((14 + 9 * n + 1.6 * n * n) * (G.Q && G.Q.lines.cure === 'c6' ? 1.35 : 1)));
+  const total = Math.min(260, Math.round((20 + 12 * n + 2.2 * n * n) * (G.Q && G.Q.lines.cure === 'c6' ? 1.35 : 1)));
   const kinds = Object.keys(MOBS).filter(k => MOBS[k].minNight <= n);
-  const dirs = [0, 1, 2, 3].sort(() => SR.f() - 0.5).slice(0, n >= 6 ? 3 : n >= 3 ? 2 : 1);
-  const offs = [0.4, 2.2, 4.4, 6.6]; // game hours after 20:00
-  G.waves = offs.map((h, k) => ({ at: h * 60 / MIN_PER_TICK, n: Math.round(total / 4 * (k === 3 ? 1.3 : 1)), dir: dirs[k % dirs.length], kinds, k, boss: k === 3 && n % 5 === 0 }));
+  const dirs = [0, 1, 2, 3].sort(() => SR.f() - 0.5).slice(0, n >= 5 ? 3 : n >= 2 ? 2 : 1);
+  const offs = [0.4, 2.0, 3.8, 5.6, 7.0]; // game hours after 20:00
+  G.waves = offs.map((h, k) => ({ at: h * 60 / MIN_PER_TICK, n: Math.round(total / 5 * (k === 4 ? 1.4 : 1)), dir: dirs[k % dirs.length], kinds, k, boss: k === 4 && n % 4 === 0 }));
   G.waveIdx = 0; G.nightTick = 0;
+  G.away = { dmg: 0, lost: [] };
   say(`${n}번째 밤 — 좀비 무리가 몰려옵니다!`, '#ff5c4c', -1, 1);
   sfxAt('horn', W.base.cx, W.base.cy);
+}
+const BASE_NEAR = 95; // a player this close to the core draws the horde to the base
+const baseDefended = () => G.players.some(p => p && p.joined && !p.dead && dist(p.x, p.y, G.core.x, G.core.y) < BASE_NEAR);
+// nobody home: the horde hits the base "off screen"; turrets, guards and walls soak it up
+function siegeOffscreen(wv) {
+  let power = wv.n * 7 * (wv.boss ? 1.6 : 1);
+  for (const s of G.structs) if (s.type === 'turret' && s.ammo > 0 && power > 0) { const use = Math.min(s.ammo, 30); s.ammo -= use; power -= use * 2.2; }
+  for (const e of G.ents) if (e.kind === 'survivor' && e.mode === 'guard' && inBase(e.x, e.y) && power > 0) { power -= 30; if (SR.chance(0.08)) { e.hp -= 60; if (e.hp <= 0) { kill(e, null); G.away.lost.push(SURVIVOR_NAMES[e.name]); } } }
+  if (power <= 0) return;
+  const walls = G.structs.filter(s => s.def.block && !INVULN[s.type] && s.type !== 'core' && s.type !== 'turret');
+  for (let k = 0; k < 6 && power > 0 && walls.length; k++) { const w = SR.pick(walls); const d = Math.min(power, w.hp * 0.6); damageStruct(w, d, null); power -= d * 0.7; G.away.dmg += d; }
+  if (power > 0) { const d = Math.min(power * 0.8, G.core.maxHp * 0.12); damageStruct(G.core, d, null); G.away.dmg += d; }
+  if (G.tick % 3 === 0) say(`📻 기지가 습격받고 있습니다! (피해 ${Math.round(G.away.dmg)}) — 돌아가서 막으세요`, '#ff7a5c', -1, 0);
 }
 function startDay() {
   G.day++;
   say(`☀ ${G.day}일차 아침 — 밤을 버텨냈습니다!`, '#ffe9a8', -1, 1);
+  if (G.away && G.away.dmg > 0) say(`기지 피해 보고: 구조물 피해 ${Math.round(G.away.dmg)}${G.away.lost.length ? ' · 전사: ' + G.away.lost.join(', ') : ''}`, '#ffb36b', -1, 1);
+  G.away = null;
   G.waves = []; G.spawnQ = [];
   // respawn dead co-op players at the core
   for (const p of G.players) if (p && p.dead) { p.dead = false; p.down = false; p.hp = 60; p.x = G.core.x + 0.5; p.y = G.core.y + 2.5; fx({ k: 'tp', pid: p.pid, x: p.x, y: p.y }); }
@@ -1245,88 +1432,155 @@ function startDay() {
   }
   // world refresh
   for (let v = 0; v < G.vh.length; v++) if (G.vh[v] > 0 && --G.vh[v] === 0) say(`${W.villages[v].name}의 분노가 가라앉았습니다.`, '#9fe6a0');
-  for (const c of W.conts) if (c.looted && SR.chance(c.village >= 0 ? 0.6 : 0.2)) { c.looted = false; fx({ k: 'cont', id: c.id, v: 0 }); }
+  for (const c of W.conts) if (c.looted && SR.chance(c.village >= 0 ? 0.6 : 0.2)) { c.looted = false; c.ev = undefined; fx({ k: 'cont', id: c.id, v: 0 }); }
   for (const e of G.ents) if (e.def.shop && e.kind === 'trader') e.stock = makeStock('trader', SR);
   if (!G.ents.some(e => e.kind === 'merchant')) spawnMerchant();
   else { const m = G.ents.find(e => e.kind === 'merchant'); m.stock = makeStock('merchant', SR); }
   G.merchantHostile = false;
   if (G.day % 3 === 0) for (const c of W.camps) {
-    const n = G.ents.filter(e => e.camp === c.id).length;
+    const n = everyone().filter(e => e.camp === c.id && !e.dead).length;
     for (let k = n; k < 6; k++) { const p = randomFreeCell(SR, c.x + 2, c.y + 2, c.x + c.w - 2, c.y + c.h - 2, 'bandit'); if (p) spawnHuman(SR.pick(['bandit_thug', 'bandit_gunner', 'bandit_smg', 'bandit_shotgun']), p.x, p.y, { camp: c.id }); }
   }
   for (let k = 0; k < 1 + SR.i(2); k++) spawnSurvivor();
   repopulateLandmarks();
   questOnDay();
+  if (typeof saveGame === 'function') setTimeout(() => saveGame(false), 0);
   if (G.day >= 3 && SR.chance(0.45)) G.raidAt = (10 + SR.i(5)) * 60;
 }
 const POI_MOBS = { hospital: ['crawler', 'toxic', 'walker'], prison: ['riot', 'hound', 'walker'], lab: ['stalker', 'walker'], station: ['walker', 'runner', 'toxic'],
-                   farm: ['hound', 'walker'], school: ['walker', 'crawler'], tower: ['walker', 'runner'], helipad: ['walker', 'runner'] };
+                   farm: ['hound', 'walker'], school: ['walker', 'crawler'], tower: ['walker', 'runner'], helipad: ['walker', 'runner'], ...POI_MOB_POOL };
 function repopulateLandmarks() {
+  const all = everyone();
   for (const P of W.pois) {
     const pool = POI_MOBS[P.key]; if (!pool) continue;
-    const have = G.ents.filter(e => e.cat === 'mob' && e.home && inRect(e.home.x, e.home.y, P)).length;
-    for (let k = have; k < 5; k++) {
-      if (G.players.some(p => p && inRect(p.x, p.y, P, 6))) break;
+    if (G.players.some(p => p && inRect(p.x, p.y, P, 30))) continue;
+    let have = 0; for (const e of all) if (e.cat === 'mob' && e.home && !e.dead && inRect(e.home.x, e.home.y, P)) have++;
+    for (let k = have; k < (P.generic ? 5 : 6); k++) {
       const pt = randomFreeCell(SR, P.x + 2, P.y + 2, P.x + P.w - 2, P.y + P.h - 2); if (!pt) continue;
-      spawnMob(SR.pick(pool), pt.x, pt.y, false, { home: { x: pt.x, y: pt.y, r: 9 } });
+      const e = spawnMob(SR.pick(pool), pt.x, pt.y, false, { home: { x: pt.x, y: pt.y, r: 9 } });
+      e.frozen = true; G.frozen.push(e); G.ents.splice(G.ents.indexOf(e), 1);
     }
   }
   const church = poiOf('church');
   if (church && !G.Q.flags.priestDead) {
-    const n = G.ents.filter(e => e.team === 'cult').length;
+    const n = all.filter(e => e.team === 'cult' && !e.dead).length;
     for (let k = n; k < 6; k++) { const pt = randomFreeCell(SR, church.x + 2, church.y + 13, church.x + church.w - 2, church.y + church.h - 2, 'cult'); if (pt) spawnHuman(SR.pick(['cultist', 'cultist', 'zealot']), pt.x, pt.y); }
   }
   const mil = poiOf('military');
   if (mil && !G.milHostile) {
-    const n = G.ents.filter(e => e.kind === 'soldier').length;
+    const n = all.filter(e => e.kind === 'soldier' && !e.dead).length;
     for (let k = n; k < 4; k++) { const pt = randomFreeCell(SR, mil.x + 3, mil.y + 12, mil.x + mil.w - 3, mil.y + mil.h - 6, 'military'); if (pt) spawnHuman('soldier', pt.x, pt.y); }
   }
 }
 function startRaid() {
-  const n = Math.min(8, 3 + (G.day >> 1)), dir = SR.i(4), cells = W.spawnsEdge[dir];
+  const n = Math.min(10, 3 + (G.day >> 1)), dir = SR.i(4);
   for (let k = 0; k < n; k++) {
-    const c = SR.pick(cells);
-    const h = spawnHuman(SR.pick(['bandit_thug', 'bandit_gunner', 'bandit_smg', 'bandit_shotgun', 'bandit_gunner']), cellX(c) + 0.5, cellY(c) + 0.5, { mode: 'raid' });
+    const c = ringCell(SR, W.base.cx, W.base.cy, 48, 60, dir * Math.PI / 2 - Math.PI / 2, 0.4, 'bandit');
+    if (!c) continue;
+    const h = spawnHuman(SR.pick(['bandit_thug', 'bandit_gunner', 'bandit_smg', 'bandit_shotgun', 'bandit_gunner']), c.x, c.y, { mode: 'raid' });
     h.mode = 'raid';
   }
   say(`약탈단 ${n}명이 ${['북', '동', '남', '서'][dir]}쪽에서 기지를 습격하러 옵니다!`, '#ff5c4c', -1, 1);
   G.warn = { dir, t: 8 };
   sfxAt('alarm', W.base.cx, W.base.cy);
 }
+// pick a wave kind by weight
+function waveKind(kinds) {
+  let tot = 0; for (const q of kinds) tot += MOBS[q].w;
+  let r = SR.f() * tot;
+  for (const q of kinds) if ((r -= MOBS[q].w) <= 0) return q;
+  return 'walker';
+}
 function updateSpawns() {
   if (G.phase === 'night' || G.phase === 'dawn') {
     G.nightTick++;
     const wv = G.waves[G.waveIdx];
+    const home = baseDefended();
     if (wv && G.nightTick >= wv.at - 8 * FPS && !wv.warned) {
-      wv.warned = true; G.warn = { dir: wv.dir, t: 10 };
-      say(`웨이브 ${wv.k + 1}/4 — ${['북', '동', '남', '서'][wv.dir]}쪽에서 접근 중!${wv.boss ? (G.nightN % 10 === 0 ? ' 골리앗 출현!' : ' 피의 악마 출현!') : ''}`, '#ff7a5c', -1, 1);
+      wv.warned = true; G.warn = home ? { dir: wv.dir, t: 10 } : null;
+      say(home ? `웨이브 ${wv.k + 1}/${G.waves.length} — ${['북', '동', '남', '서'][wv.dir]}쪽에서 접근 중!${wv.boss ? (G.nightN % 8 === 0 ? ' 골리앗 출현!' : ' 피의 악마 출현!') : ''}`
+               : `웨이브 ${wv.k + 1}/${G.waves.length} — 어둠 속에서 무언가 당신의 냄새를 쫓고 있습니다…`, '#ff7a5c', -1, 1);
     }
     if (wv && G.nightTick >= wv.at) {
       G.waveIdx++;
-      for (let k = 0; k < wv.n; k++) {
-        let tot = 0; for (const q of wv.kinds) tot += MOBS[q].w;
-        let r = SR.f() * tot, kind = 'walker';
-        for (const q of wv.kinds) if ((r -= MOBS[q].w) <= 0) { kind = q; break; }
-        G.spawnQ.push({ kind, dir: SR.chance(0.8) ? wv.dir : SR.i(4) });
+      if (home) {
+        for (let k = 0; k < wv.n; k++) G.spawnQ.push({ kind: waveKind(wv.kinds), dir: SR.chance(0.8) ? wv.dir : SR.i(4) });
+        if (wv.boss) G.spawnQ.push({ kind: G.nightN % 8 === 0 ? 'goliath' : 'fiend', dir: wv.dir });
+      } else {
+        // out in the wild: a smaller pack hunts each player, and the base takes the rest
+        for (const p of alivePlayers()) for (let k = 0; k < Math.round(wv.n * 0.35); k++) G.spawnQ.push({ kind: waveKind(wv.kinds), hunt: p.pid });
+        siegeOffscreen(wv);
       }
-      if (wv.boss) G.spawnQ.push({ kind: G.nightN % 10 === 0 ? 'goliath' : 'fiend', dir: wv.dir });
     }
   }
-  if (G.spawnQ.length && G.tick % 5 === 0 && G.ents.length < 320) {
-    const q = G.spawnQ.shift(), cells = W.spawnsEdge[q.dir];
-    const c = SR.pick(cells);
-    if (c !== undefined) spawnMob(q.kind, cellX(c) + 0.5, cellY(c) + 0.5, true);
+  if (G.spawnQ.length && G.tick % 4 === 0 && G.ents.length < 420) {
+    const q = G.spawnQ.shift();
+    if (q.hunt !== undefined) {
+      const p = G.players[q.hunt];
+      const c = p && ringCell(SR, p.x, p.y, 24, 34);
+      if (c) { const e = spawnMob(q.kind, c.x, c.y, true); e.hunt = q.hunt; }
+    } else {
+      const c = ringCell(SR, W.base.cx, W.base.cy, 44, 58, q.dir * Math.PI / 2 - Math.PI / 2, 0.55);
+      if (c) spawnMob(q.kind, c.x, c.y, true);
+    }
   }
-  if (G.phase === 'day' && G.tick % (FPS * 4) === 0) {
-    const n = G.ents.filter(e => e.cat === 'mob' && !e.wave).length;
-    if (n < Math.min(140, 75 + G.day * 5)) spawnDayZombie();
-  }
+  if (G.tick % FPS === 0) ambientSpawns();
   if (G.warn && (G.warn.t -= DT) <= 0) G.warn = null;
 }
+// Minecraft-style ambient spawning: zombies appear out of sight around each player,
+// with the mix decided by the biome, and despawn when everyone is far away.
+function ambientSpawns() {
+  const ps = alivePlayers(); if (!ps.length) return;
+  const dark = G.phase === 'night' || G.phase === 'dusk' || G.phase === 'dawn';
+  const cap = Math.min(80, 26 + G.day * 4) * (dark ? 1.5 : 1) / Math.max(1, ps.length * 0.75);
+  for (const p of ps) {
+    let n = 0;
+    for (const e of G.ents) if (e.cat === 'mob' && !e.home && !e.wave && Math.abs(e.x - p.x) < 50 && Math.abs(e.y - p.y) < 50) n++;
+    if (n >= cap) continue;
+    for (let k = 0; k < (dark ? 3 : 2); k++) {
+      const c = ringCell(SR, p.x, p.y, 23, 44);
+      if (!c) continue;
+      if (ps.some(q => dist(q.x, q.y, c.x, c.y) < 21) || villageAt(c.x, c.y) || dist(c.x, c.y, W.base.cx, W.base.cy) < 24) continue;
+      if (W.bldAt[c.i] >= 0 && W.buildings[W.bldAt[c.i]].village >= 0) continue;
+      const pool = BIOME_MOBS[W.biome[c.i]] || BIOME_MOBS[BIO.PLAINS];
+      const ok = pool.filter(m => (m[2] || 0) <= G.day);
+      let tot = 0; for (const m of ok) tot += m[1];
+      let r = SR.f() * tot, kind = 'walker';
+      for (const m of ok) if ((r -= m[1]) <= 0) { kind = m[0]; break; }
+      const pack = kind === 'hound' ? 3 + SR.i(3) : kind === 'walker' && SR.chance(0.12) ? 4 + SR.i(5) : 1; // packs and small hordes
+      for (let j = 0; j < pack; j++) {
+        const e = spawnMob(kind, c.x + SR.r(-1.2, 1.2), c.y + SR.r(-1.2, 1.2), false);
+        if (blockedAt(e.x, e.y, 'zombie')) { e.x = c.x; e.y = c.y; }
+      }
+    }
+  }
+}
+// Minecraft-style chunk loading: anything far from every player is unloaded (frozen) and
+// comes back when someone walks near again. Ambient zombies simply despawn.
+const ACT_IN = 62, ACT_OUT = 82;
+function activation(force) {
+  const ps = G.players.filter(p => p && p.joined && !p.dead);
+  if (!ps.length) return;
+  const near = (x, y, r) => { for (const p of ps) if (Math.abs(p.x - x) < r && Math.abs(p.y - y) < r) return true; return false; };
+  for (const e of G.ents) {
+    if (e.dead || e.tag || e.wave || e.hunt !== undefined || e.mode === 'follow' || e.mode === 'raid' || e.mode === 'guard' || e.kind === 'merchant' || e.goto) continue;
+    if (e.kind === 'survivor' && e.mode !== 'wait') continue;
+    if (near(e.x, e.y, ACT_OUT)) continue;
+    if (e.cat === 'mob' && !e.home) { e.dead = true; continue; } // despawn
+    e.frozen = true; e.target = null; e.path = null; e.invest = null; G.frozen.push(e);
+  }
+  for (let k = G.frozen.length - 1; k >= 0; k--) {
+    const e = G.frozen[k];
+    if (e.dead || !near(e.x, e.y, ACT_IN)) continue;
+    G.frozen.splice(k, 1); e.frozen = false; G.ents.push(e);
+  }
+  if (force) G.ents = G.ents.filter(e => !e.frozen && !e.dead);
+}
+const everyone = () => G.frozen.length ? G.ents.concat(G.frozen) : G.ents;
 
 // ── flows & separation ─────────────────────────────────────────────────────
 function updateFlows() {
-  if (--flowBaseCD <= 0 && flowBaseDirty) { flowBaseDirty = false; flowBaseCD = 25; flowField(flowBase, G.core.cells); }
+  if (--flowBaseCD <= 0 && flowBaseDirty) { flowBaseDirty = false; flowBaseCD = 25; flowField(flowBase, G.core.cells, 1300); }
   if (--flowPlCD <= 0) {
     const ps = alivePlayers(), key = ps.map(p => idx(Math.floor(p.x), Math.floor(p.y))).join(',');
     if (key !== flowPlKey) { flowPlKey = key; flowPlCD = 8; flowField(flowPl, ps.map(p => idx(Math.floor(p.x), Math.floor(p.y))), 420); }
@@ -1335,11 +1589,11 @@ function updateFlows() {
 const sepGrid = new Map();
 function separate() {
   sepGrid.clear();
-  for (const e of G.ents) { const k = (Math.floor(e.x / 2) << 8) | Math.floor(e.y / 2); let a = sepGrid.get(k); if (!a) sepGrid.set(k, a = []); a.push(e); }
+  for (const e of G.ents) { const k = Math.floor(e.x / 2) * 1024 + Math.floor(e.y / 2); let a = sepGrid.get(k); if (!a) sepGrid.set(k, a = []); a.push(e); }
   for (const e of G.ents) {
     const gx = Math.floor(e.x / 2), gy = Math.floor(e.y / 2);
     for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) {
-      const a = sepGrid.get(((gx + ox) << 8) | (gy + oy)); if (!a) continue;
+      const a = sepGrid.get((gx + ox) * 1024 + gy + oy); if (!a) continue;
       for (const o of a) {
         if (o.id <= e.id) continue;
         const dx = o.x - e.x, dy = o.y - e.y, d = Math.hypot(dx, dy), m = (e.r + o.r) * 0.85;
@@ -1371,7 +1625,7 @@ function simTick() {
   const lodPass = G.tick % 25 === 0, ps = lodPass ? G.players.filter(p => p && p.joined && !p.dead) : null;
   for (const e of G.ents) {
     if (e.dead) continue;
-    if (lodPass) { let m = 1e9; for (const p of ps) { const d = Math.abs(p.x - e.x) + Math.abs(p.y - e.y); if (d < m) m = d; } e.far = m > 50 ? 2 : m > 34 ? 1 : 0; }
+    if (lodPass) { let m = 1e9; for (const p of ps) { const d = Math.abs(p.x - e.x) + Math.abs(p.y - e.y); if (d < m) m = d; } e.far = m > 56 ? 2 : m > 36 ? 1 : 0; }
     if (e.far && !e.wave && !e.target && !e.dashT && e.mode !== 'follow' && e.mode !== 'raid' && (G.tick + e.id) % (e.far === 2 ? 6 : 3) !== 0) continue;
     (e.cat === 'mob' ? updateMob : updateHuman)(e);
   }
@@ -1381,11 +1635,12 @@ function simTick() {
   updateHazards();
   processBooms();
   updateSpawns();
+  if (G.tick % 25 === 7) activation();
   questTick();
   if (lodPass) for (const e of G.ents) if (e.def.boss && e.def.por && !G.Q.seenBoss.includes(e.kind) && G.players.some(p => p && p.joined && !p.dead && dist(p.x, p.y, e.x, e.y) < 13)) {
     G.Q.seenBoss.push(e.kind); fx({ k: 'boss', por: e.def.por, name: e.title || e.def.name }); sfxAt('horn', e.x, e.y); qBump();
   }
-  if (G.ents.some(e => e.dead)) G.ents = G.ents.filter(e => !e.dead);
+  if (G.ents.some(e => e.dead || e.frozen)) G.ents = G.ents.filter(e => !e.dead && !e.frozen);
   for (const d of G.drops) d.ttl--;
   if (G.tick % 50 === 0) G.drops = G.drops.filter(d => d.ttl > 0);
 }
