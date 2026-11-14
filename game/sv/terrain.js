@@ -131,7 +131,7 @@ function loadGroundArt(map) {
       if (--left === 0) { TEX_ART = true; V.chunks.clear(); }
     };
     im.onerror = () => { left--; };
-    im.src = 'assets/' + file;
+    im.src = 'assets/' + file + '?v=' + ART_V;
   }
 }
 
@@ -141,7 +141,7 @@ function loadSprites(m) {
   if (!m || typeof Image === 'undefined') return;
   const im = new Image();
   im.onload = () => { SPR.img = im; SPR.map = m.map; V.chunks.clear(); };
-  im.src = 'assets/' + m.file;
+  im.src = 'assets/' + m.file + '?v=' + ART_V;
 }
 const sprOk = key => SPR.img && SPR.map[key];
 // draw sprite `key` centred at (x, y) with the given width (height keeps the aspect), optional rotation

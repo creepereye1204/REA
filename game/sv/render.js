@@ -9,15 +9,16 @@ const V = {
 };
 
 // ── generated art (item icons, portraits, illustrations) ──────────────────
+const ART_V = 3; // bump when assets/ change so browsers refetch
 const ART = { items: null, im: {}, por: null, pm: {}, scenes: {}, sceneSrc: {} };
 function loadArt() {
   if (typeof fetch !== 'function' || typeof Image === 'undefined') return;
-  fetch('assets/art.json').then(r => r.json()).then(m => {
+  fetch('assets/art.json?v=' + ART_V).then(r => r.json()).then(m => {
     ART.im = m.items.map; ART.pm = m.portraits.map; ART.sceneSrc = m.scenes;
     if (m.ground) loadGroundArt(m.ground);
     if (m.sprites) loadSprites(m.sprites);
-    ART.items = new Image(); ART.items.src = 'assets/' + m.items.file;
-    ART.por = new Image(); ART.por.src = 'assets/' + m.portraits.file;
+    ART.items = new Image(); ART.items.src = 'assets/' + m.items.file + '?v=' + ART_V;
+    ART.por = new Image(); ART.por.src = 'assets/' + m.portraits.file + '?v=' + ART_V;
     sceneImg('scene_title');
   }).catch(() => {});
 }
@@ -36,7 +37,7 @@ function drawPortrait(g, key, x, y, s) {
 }
 function sceneImg(key) {
   if (!ART.sceneSrc[key]) return null;
-  if (!ART.scenes[key]) { ART.scenes[key] = new Image(); ART.scenes[key].src = 'assets/' + ART.sceneSrc[key]; }
+  if (!ART.scenes[key]) { ART.scenes[key] = new Image(); ART.scenes[key].src = 'assets/' + ART.sceneSrc[key] + '?v=' + ART_V; }
   return imgOk(ART.scenes[key]) ? ART.scenes[key] : null;
 }
 const CH = 16; // chunk size in tiles
@@ -477,7 +478,8 @@ function spriteTree(g, x, y, key, size) {
   const px = x * TILE + 16, py = y * TILE + 16, h = hash(x, y), s = size * (0.85 + h * 0.35), sway = Math.sin(V.frame / 70 + h * 10) * 1.2;
   g.fillStyle = 'rgba(0,0,0,.28)'; g.beginPath(); g.ellipse(px + 8, py + 8, s * 0.42, s * 0.22, 0, 0, TAU); g.fill();
   g.fillStyle = '#4a3020'; g.fillRect(px - 3, py - 8, 6, 16);
-  return drawSprite(g, key, px + sway, py - s * 0.36, s, h * TAU);
+  const me = meP(), under = me && Math.abs(me.x - x - 0.5) < 1.6 && me.y - y < 0.8 && y - me.y < 2.6;
+  return drawSprite(g, key, px + sway, py - s * 0.36, s, h * TAU, under ? 0.4 : undefined);
 }
 function drawTree(g, x, y) {
   const px = x * TILE + 16, py = y * TILE + 16, h = hash(x, y), s = 0.85 + h * 0.4;
