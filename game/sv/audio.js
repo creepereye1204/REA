@@ -73,8 +73,9 @@ function richSfx(name, vol) {
 }
 // called every frame: fade the beds and schedule ambient one-shots
 function updateAudio(dt) {
-  if (!actx || !G || !audioGraph()) return;
-  const me = meP(); if (!me) return;
+  if (!actx || !audioGraph()) return;
+  const me = G && meP();
+  if (!me) { const t0 = actx.currentTime; for (const g of [AUD.wind.g, AUD.rain.g, AUD.drone, AUD.eng && AUD.eng.gn]) if (g) g.gain.setTargetAtTime(0, t0, 0.3); return; }
   const t = actx.currentTime, w = G.weather || { k: 'clear', i: 0 }, night = G.phase === 'night' || G.phase === 'dawn';
   const b = biomeAt(me.x, me.y), open = b !== BIO.CITY;
   const set = (g, v) => g.gain.setTargetAtTime(v, t, 0.6);
@@ -90,6 +91,13 @@ function updateAudio(dt) {
     if (near) richSfx('groan', 1 - nd / 18);
     AUD.nextGroan = t + 1.5 + Math.random() * 4;
   }
+  // engine hum while driving
+  if (me.veh) {
+    if (!AUD.eng) { const o = actx.createOscillator(), o2 = actx.createOscillator(), f = actx.createBiquadFilter(), gn = actx.createGain(); o.type = 'sawtooth'; o2.type = 'square'; f.type = 'lowpass'; f.frequency.value = 400; gn.gain.value = 0; o.connect(f); o2.connect(f); f.connect(gn); gn.connect(master); o.start(); o2.start(); AUD.eng = { o, o2, gn, f }; }
+    const sp = Math.abs(me.veh.spd);
+    AUD.eng.o.frequency.setTargetAtTime(38 + sp * 7, t, 0.1); AUD.eng.o2.frequency.setTargetAtTime(19 + sp * 3.5, t, 0.1); AUD.eng.f.frequency.setTargetAtTime(250 + sp * 60, t, 0.1);
+    AUD.eng.gn.gain.setTargetAtTime(me.veh.fuel > 0 ? 0.05 + sp * 0.004 : 0, t, 0.15);
+  } else if (AUD.eng) AUD.eng.gn.gain.setTargetAtTime(0, t, 0.2);
   const tense = (me.hp < 30 && !me.down) || (me.useP > 0 && me.useLabel && /뒤지기|훔치기/.test(me.useLabel));
   if (tense && t > AUD.beatT) { richSfx('heart', me.hp < 30 ? 1 : 0.6); AUD.beatT = t + (me.hp < 30 ? 0.75 : 1.0); }
 }

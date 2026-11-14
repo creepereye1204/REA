@@ -283,7 +283,7 @@ function draw(dtReal) {
   V.frame++; V.dt = Math.min(0.05, dtReal || 0.016);
   g.setTransform(RS, 0, 0, RS, 0, 0);
   g.fillStyle = '#0d0e11'; g.fillRect(0, 0, VIEW_W, VIEW_H);
-  if (!G) { drawTitle(g); drawUI(g); return; }
+  if (!G) { drawTitle(g); drawUI(g); if (typeof updateAudio === "function") updateAudio(0.016); return; }
   const me = meP();
   const zoom = 1;
   if (V.frame % 10 === 0) {
@@ -862,6 +862,11 @@ function drawPlayer(g, p) {
   if (p.veh) { drawCar(g, p.x * TILE, p.y * TILE, p.veh.ang, p.veh.color, { lights: G.phase !== 'day', brake: p.veh.spd < 1, driver: p.color }); return; }
   const gl = GUN_LOOK[p.wpn];
   const swing = p.wpn === 'machete' && p.fireT > 0.2;
+  if (!p.down) { // backpack, on the side away from where you aim
+    const bx = p.x * TILE - Math.cos(p.angle) * 6, by = p.y * TILE - 17 - Math.sin(p.angle) * 3;
+    g.fillStyle = '#5a4a32'; roundRect(g, bx - 7, by - 6, 14, 13, 4); g.fill(); g.strokeStyle = 'rgba(0,0,0,.5)'; g.lineWidth = 1; g.stroke();
+    g.fillStyle = '#7a6440'; g.fillRect(bx - 5, by - 4, 10, 3);
+  }
   drawBody(g, p.x, p.y, p.angle + (swing ? 0.8 : 0), { r: 0.34, body: p.color, head: '#f0c9a0', hat: '#2a2a2a', walk: p.walk, flash: p.flash > 0, gun: true, gunLen: gl[0], gunCol: gl[1], gunW: gl[2], legs: '#2a2a3a', down: p.down });
   if (p.in && p.in.crouch && !p.down) { g.fillStyle = 'rgba(160,200,255,.7)'; g.font = '10px system-ui'; g.textAlign = 'center'; g.fillText('은신', p.x * TILE, p.y * TILE + 16); }
 }
