@@ -9,7 +9,7 @@ const V = {
 };
 
 // ── generated art (item icons, portraits, illustrations) ──────────────────
-const ART_V = 6; // bump when assets/ change so browsers refetch
+const ART_V = 7; // bump when assets/ change so browsers refetch
 const ART = { items: null, im: {}, por: null, pm: {}, scenes: {}, sceneSrc: {} };
 function loadArt() {
   if (typeof fetch !== 'function' || typeof Image === 'undefined') return;
@@ -1344,9 +1344,13 @@ function drawLighting(g, sx, sy) {
       const a = e.angle, ax = Math.cos(a), ay = Math.sin(a), col = e.kind === 'x13' ? '90,255,255' : e.kind === 'fiend' ? '255,210,60' : '255,40,30';
       const al = (e.def.stealth && !(e.revealT > 0) ? 0.35 : 0.85) * ga * (0.8 + 0.2 * Math.sin(V.frame / 7 + e.id));
       let pts;
-      if (e.def.dog) { const hx = wx + ax * 12, hy = wy - 13 + ay * 6; pts = [[hx + ax * 3, hy - 1]]; }
+      const sk = charKey(e.kind, e.id);
+      if (chrOk(sk)) { // top-down sprite: eyes sit at the front of the head, near the middle
+        const sz = charSize(e.kind), f = sz * 0.2, sd = sz * 0.07, cx = wx + ax * f, cy = wy - 8 + ay * f;
+        pts = [[cx - ay * sd, cy + ax * sd], [cx + ay * sd, cy - ax * sd]];
+      } else if (e.def.dog) { const hx = wx + ax * 12, hy = wy - 13 + ay * 6; pts = [[hx + ax * 3, hy - 1]]; }
       else {
-        if (ay <= -0.6) continue; // facing away: no eyes
+        if (ay <= -0.6) continue; // facing away: no eyes (drawn bodies only)
         const sz = e.def.r * TILE, low = e.def.low ? 0.55 : 1, bob = Math.sin(e.walk || 0) * 1.6;
         const hx = wx + ax * 2, hy = wy - sz * 1.95 * low + bob - sz * 0.3 + ay, ex = hx + ax * sz * 0.3, ey = hy - 1 + ay * 2;
         pts = [[ex - 2 + ay * 2, ey], [ex + 2 + ay * 2, ey]];

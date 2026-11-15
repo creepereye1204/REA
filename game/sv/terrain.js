@@ -281,7 +281,7 @@ function drawChar(g, key, x, y, ang, size, o = {}) {
     return true;
   }
   g.translate(px + Math.cos(ang) * lunge, py + Math.sin(ang) * lunge);
-  g.rotate(ang + Math.PI / 2 + bob * 0.07 + (o.down ? 1.4 : 0));
+  g.rotate(ang + Math.PI / 2 + (r[4] === 2 ? Math.PI : 0) + bob * 0.07 + (o.down ? 1.4 : 0));
   if (o.alpha !== undefined) g.globalAlpha = o.alpha;
   if (o.down) g.globalAlpha = (o.alpha === undefined ? 1 : o.alpha) * 0.85;
   g.drawImage(CHR.img, r[0], r[1], r[2], r[3], -w / 2, -h / 2, w, h);
