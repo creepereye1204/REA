@@ -9,7 +9,7 @@ const V = {
 };
 
 // ── generated art (item icons, portraits, illustrations) ──────────────────
-const ART_V = 4; // bump when assets/ change so browsers refetch
+const ART_V = 5; // bump when assets/ change so browsers refetch
 const ART = { items: null, im: {}, por: null, pm: {}, scenes: {}, sceneSrc: {} };
 function loadArt() {
   if (typeof fetch !== 'function' || typeof Image === 'undefined') return;
@@ -958,7 +958,7 @@ function drawPlayer(g, p) {
   const swing = p.wpn === 'machete' && p.fireT > 0.2;
   const pk = p.pid ? 'player_orange' : 'player_blue';
   if (chrOk(pk)) {
-    drawChar(g, pk, p.x, p.y, p.angle + (swing ? 0.6 : 0), 38, { walk: p.walk * 0.8, flash: p.flash > 0, down: p.down });
+    drawChar(g, pk, p.x, p.y, p.angle + (swing ? 0.6 : 0), 48, { walk: p.walk * 0.8, flash: p.flash > 0, down: p.down });
     if (!p.down) { // the weapon in your hands
       const gl2 = GUN_LOOK[p.wpn], a = p.angle + (swing ? 0.8 : 0), hx = p.x * TILE + Math.cos(a) * 8, hy = p.y * TILE - 8 + Math.sin(a) * 8;
       g.strokeStyle = 'rgba(0,0,0,.6)'; g.lineWidth = gl2[2] + 2; g.lineCap = 'butt'; g.beginPath(); g.moveTo(hx, hy); g.lineTo(hx + Math.cos(a) * gl2[0], hy + Math.sin(a) * gl2[0]); g.stroke();

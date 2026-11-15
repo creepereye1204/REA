@@ -237,8 +237,8 @@ function chrTint(key, col) {
 // size in px across the sprite's longer side
 function charSize(kind) {
   const d = MOBS[kind] || HUMANS[kind];
-  if (MOBS[kind]) return Math.max(34, d.r * TILE * 2.9) * (kind === 'hound' ? 1.15 : 1);
-  return d && d.boss ? 46 : 38;
+  if (MOBS[kind]) return Math.max(46, d.r * TILE * 3.9) * (kind === 'hound' ? 1.1 : kind === 'crawler' ? 0.9 : 1);
+  return d && d.boss ? 60 : 50;
 }
 // o: { walk, atk, flash, alpha, scale, down }
 function drawChar(g, key, x, y, ang, size, o = {}) {
@@ -254,6 +254,18 @@ function drawChar(g, key, x, y, ang, size, o = {}) {
   const k = size / Math.max(r[2], r[3]), w = r[2] * k * (o.scale || 1) * (1 + bob * 0.035), h = r[3] * k * (o.scale || 1) * (1 - bob * 0.02);
   g.fillStyle = 'rgba(0,0,0,.32)'; g.beginPath(); g.ellipse(px + 3, py + 11, w * 0.42, w * 0.22, 0, 0, TAU); g.fill();
   g.save();
+  if (r[4] === 1 && !o.down) { // upright 3/4 sprite: stand it up, mirror toward the facing side, lean with the stride
+    const flip = Math.cos(ang) < -0.15 ? -1 : 1;
+    g.translate(px + Math.cos(ang) * lunge, py + 10 + Math.sin(ang) * lunge * 0.5);
+    g.rotate(bob * 0.06 * flip + (o.atk || 0) * 0.15 * flip);
+    g.scale(flip, 1);
+    if (o.alpha !== undefined) g.globalAlpha = o.alpha;
+    g.drawImage(CHR.img, r[0], r[1], r[2], r[3], -w / 2, -h + 4, w, h);
+    if (o.flash) { g.globalAlpha = 0.75; g.drawImage(chrTint(key, '#ffffff'), -w / 2, -h + 4, w, h); }
+    else if (o.hurt) { g.globalAlpha = o.hurt * 0.45; g.drawImage(chrTint(key, '#b00000'), -w / 2, -h + 4, w, h); }
+    g.restore();
+    return true;
+  }
   g.translate(px + Math.cos(ang) * lunge, py + Math.sin(ang) * lunge);
   g.rotate(ang + Math.PI / 2 + bob * 0.07 + (o.down ? 1.4 : 0));
   if (o.alpha !== undefined) g.globalAlpha = o.alpha;
