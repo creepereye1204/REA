@@ -9,7 +9,7 @@ const V = {
 };
 
 // ── generated art (item icons, portraits, illustrations) ──────────────────
-const ART_V = 5; // bump when assets/ change so browsers refetch
+const ART_V = 6; // bump when assets/ change so browsers refetch
 const ART = { items: null, im: {}, por: null, pm: {}, scenes: {}, sceneSrc: {} };
 function loadArt() {
   if (typeof fetch !== 'function' || typeof Image === 'undefined') return;
