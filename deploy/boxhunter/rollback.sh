@@ -15,6 +15,7 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 git archive "$TAG" index.html classic.html game assets 2>/dev/null | tar -x -C "$TMP" || git archive "$TAG" index.html classic.html game | tar -x -C "$TMP"
 mkdir -p "$HERE/site"
 rsync -a --delete "$TMP/" "$HERE/site/"
+chmod -R a+rX "$HERE/site"   # mktemp dirs are private; nginx must read them
 echo "boxhunter now serves $TAG ($(git rev-parse --short "$TAG^{commit}"))"
 if [[ "${2:-}" == "--pages" ]]; then
   git checkout "$TAG" -- index.html classic.html game assets
