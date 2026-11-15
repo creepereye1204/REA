@@ -84,3 +84,8 @@ The original SWF and its full decompiled source are not included.
 ```bash
 python3 -m http.server 8000   # then open http://localhost:8000 (classic: /classic.html)
 ```
+
+## Tests
+- `node tests/run.js` — headless test suite (simulation, co-op sync, save/load, cars, weapons, jobs, farming, levels, rebels, events, rendering of every character and pose, quests). `node tests/run.js coop` runs one file.
+- `node tests/visual.mjs` — renders key scenes in headless Chrome (started and closed by the script) and writes screenshots to `tests/out/`.
+- `deploy/boxhunter/rollback.sh <tag>` — put the live site back to any tagged version.

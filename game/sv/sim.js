@@ -97,6 +97,7 @@ function spawnHuman(kind, x, y, o = {}) {
   if (kind === 'bandit_boss') { h.inv.cash += 150; h.inv['wpn:rifle'] = 1; h.inv['mag:rifle'] = 3; }
   if (kind === 'guard') h.inv['mag:rifle'] = 1 + SR.i(2);
   if (d.shop && !h.stock) h.stock = makeStock(kind, SR);
+  if (kind === 'survivor') { h.name = SR.i(SURVIVOR_NAMES.length); h.perk = SR.pick(Object.keys(PERKS)); h.hunger = 0; } // callers may override
   return h;
 }
 function spawnMerchant() {

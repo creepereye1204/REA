@@ -17,7 +17,7 @@ function loadArt() {
     ART.im = m.items.map; ART.pm = m.portraits.map; ART.sceneSrc = m.scenes;
     if (m.ground) loadGroundArt(m.ground);
     if (m.sprites) loadSprites(m.sprites);
-    if (m.chars) loadChars(m.chars);
+    // character sprites (m.chars) are no longer used: everyone is drawn with the animated rig
     ART.items = new Image(); ART.items.src = 'assets/' + m.items.file + '?v=' + ART_V;
     ART.por = new Image(); ART.por.src = 'assets/' + m.portraits.file + '?v=' + ART_V;
     sceneImg('scene_title');
@@ -200,6 +200,14 @@ function groundOverlay(g, tx, ty, px, py, t, h) {
   // soft contact shadow along the foot of walls
   if (inMap(tx, ty - 1) && TILE_OPAQUE[W.tile[idx(tx, ty - 1)]] && W.tile[idx(tx, ty - 1)] !== T.BUSH) { const gr = g.createLinearGradient(0, py, 0, py + 12); gr.addColorStop(0, 'rgba(0,0,0,.35)'); gr.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = gr; g.fillRect(px, py, TILE, 12); }
 }
+// rig corpse: the body lying where it fell, darkened, in a pool of blood (painted into the terrain chunk)
+function corpseRig(x, y, look, a) {
+  const cx = Math.floor(x / CH), cy = Math.floor(y / CH), c = V.chunks.get(cx + ',' + cy);
+  if (!c) return;
+  const g = c.getContext('2d'), ox = (x - cx * CH) * TILE + Math.cos(a) * 10, oy = (y - cy * CH) * TILE + Math.sin(a) * 10;
+  g.fillStyle = 'rgba(70,6,6,.55)'; g.beginPath(); g.ellipse(ox, oy, look.s * 2, look.s * 1.4, a, 0, TAU); g.fill();
+  drawRig(g, ox, oy, { ...look, ang: a + 1.4, moving: false, hurt: 1.2, pose: look.pose === 'gun' ? 'none' : look.pose });
+}
 // sprite corpse: the character lying where it fell, darkened, in a pool of blood
 function corpseSprite(x, y, key, size, a) {
   const cx = Math.floor(x / CH), cy = Math.floor(y / CH), c = V.chunks.get(cx + ',' + cy), r = CHR.map[key];
@@ -274,7 +282,7 @@ function applyFx(o) {
       break;
     case 'lightning': V.flashT = 0.35; V.shake = Math.max(V.shake, 3); setTimeout(() => sfx('thunder'), 300 + Math.random() * 900); break;
     case 'blood': for (let k = 0; k < 5; k++) V.parts.push({ k: 'drop', x: o.x, y: o.y, z: 0.6, vx: rnd(-2, 2), vy: rnd(-2, 2), vz: rnd(1, 3), c: o.z ? '#3a5a1a' : '#8a1010', t: 0, life: 0.6 }); decal(o.x, o.y, 0.25, o.z ? '#2a3a12' : '#5b0f0f', 2); break;
-    case 'gib': if (o.kind && chrOk(charKey(o.kind, o.id || 0))) { const key = charKey(o.kind, o.id || 0); V.parts.push({ k: 'dying', key, x: o.x, y: o.y, a: o.a || rnd(0, TAU), size: charSize(o.kind), t: 0, life: 0.45 }); setTimeout(() => corpseSprite(o.x, o.y, key, charSize(o.kind), o.a || 0), 450); } else corpse(o.x, o.y, o.c, o.big);
+    case 'gib': if (o.kind && (MOBS[o.kind] || HUMANS[o.kind]) && !(MOBS[o.kind] && MOBS[o.kind].dog)) { const def = MOBS[o.kind] || HUMANS[o.kind], look = rigLook({ kind: o.kind, id: o.id || 0, def, cat: MOBS[o.kind] ? 'mob' : 'human', wpn: def.wpn }); V.parts.push({ k: 'dyingRig', look, x: o.x, y: o.y, a: o.a || rnd(0, TAU), t: 0, life: 0.4 }); setTimeout(() => corpseRig(o.x, o.y, look, o.a || 0), 400); } else corpse(o.x, o.y, o.c, o.big);
       for (let k = 0; k < (o.big ? 14 : 8); k++) V.parts.push({ k: 'chunk', x: o.x, y: o.y, z: 0.6, vx: rnd(-3, 3), vy: rnd(-3, 3), vz: rnd(2, 5), c: k % 2 ? o.c : '#5a0a0a', t: 0, life: 0.9 }); decal(o.x, o.y, o.big ? 0.6 : 0.4, '#4a0c0c', o.big ? 14 : 8); break;
     case 'boom':
       V.parts.push({ k: 'boom', x: o.x, y: o.y, r: o.r, fire: o.fire, t: 0, life: o.r > 1 ? 0.45 : 0.25 });
@@ -945,53 +953,38 @@ const GUN_LOOK = { pistol: [10, '#222', 4], smg: [15, '#2a2a2a', 5], shotgun: [2
   knife: [10, '#ddd', 2], bat: [20, '#b08850', 4], spear: [30, '#a08a5a', 2], axe: [20, '#c84030', 5], katana: [26, '#e8eef4', 2], sledge: [22, '#606268', 7], chainsaw: [22, '#e0a020', 7],
   revolver: [12, '#4a4a50', 4], crossbow: [18, '#6a4a2a', 5], flamer: [22, '#a03020', 6] };
 function drawEnt(g, e) {
-  const x = e.rx !== undefined ? e.rx : e.x, y = e.ry !== undefined ? e.ry : e.y;
-  const ck = charKey(e.kind, e.id);
-  if (chrOk(ck)) {
-    const d = e.def;
-    let alpha;
-    if (d.stealth && !(e.revealT > 0) && !(e.flash > 0)) { const p = meP(); alpha = p && dist(p.x, p.y, x, y) < 4.5 ? 0.85 : 0.13; }
-    if (d.gas) { g.fillStyle = `rgba(140,220,60,${0.18 + 0.08 * Math.sin(V.frame / 7 + e.id)})`; g.beginPath(); g.arc(x * TILE, y * TILE - 8, 22, 0, TAU); g.fill(); }
-    if (d.explode) { const p = meP(); if (p && dist(p.x, p.y, x, y) < d.explode.r + 2.5) { g.strokeStyle = `rgba(255,170,40,${0.35 + 0.25 * Math.sin(V.frame / 4)})`; g.lineWidth = 2; g.setLineDash([6, 5]); g.beginPath(); g.ellipse(x * TILE, y * TILE, d.explode.r * TILE, d.explode.r * TILE * 0.8, 0, 0, TAU); g.stroke(); g.setLineDash([]); } }
-    if (e.kind === 'x13' && e.revealT > 0) drawChar(g, ck, x - Math.cos(e.angle) * 0.6, y - Math.sin(e.angle) * 0.6, e.angle, charSize(e.kind), { alpha: 0.3 });
-    drawChar(g, ck, x, y, e.angle, charSize(e.kind) * (d.boss && e.cat === 'human' ? 1.15 : 1), { walk: e.walk * 0.9, atk: e.atkAnim, flash: e.flash > 0, alpha, hurt: e.maxHp ? Math.max(0, 0.6 - e.hp / e.maxHp) : 0 });
-    if (e.cat === 'human' && e.wpn && !WEAPONS[e.wpn].melee && e.fireT > 0 && e.fireT > WEAPONS[e.wpn].rate) { /* muzzle flash comes from fx */ }
-    if (e.hp < e.maxHp) bar(g, x, y - (d.r > 0.5 ? 1.5 : 1.05), d.boss ? 40 : 22, e.hp / e.maxHp, e.cat === 'mob' ? (d.boss ? '#f84' : '#9d5') : e.team === 'player' ? '#7dff9a' : '#e84');
-    return;
+  const x = e.rx !== undefined ? e.rx : e.x, y = e.ry !== undefined ? e.ry : e.y, d = e.def;
+  // moving? (walk advances while an actor moves, on host and guest alike)
+  e._mv = (e._lw !== undefined && Math.abs(e.walk - e._lw) > 0.001) ? 6 : Math.max(0, (e._mv || 0) - 1); e._lw = e.walk;
+  let alpha;
+  if (d.stealth && !(e.revealT > 0) && !(e.flash > 0)) { const p = meP(); alpha = p && dist(p.x, p.y, x, y) < 4.5 ? 0.85 : 0.13; }
+  if (d.explode) { const p = meP(); if (p && dist(p.x, p.y, x, y) < d.explode.r + 2.5) { g.strokeStyle = `rgba(255,170,40,${0.35 + 0.25 * Math.sin(V.frame / 4)})`; g.lineWidth = 2; g.setLineDash([6, 5]); g.beginPath(); g.ellipse(x * TILE, y * TILE, d.explode.r * TILE, d.explode.r * TILE * 0.8, 0, 0, TAU); g.stroke(); g.setLineDash([]); } }
+  if (d.dog) drawDogRig(g, x * TILE, y * TILE, e);
+  else {
+    const look = rigLook(e);
+    const o = { ...look, ang: e.angle, walk: e.walk * (e.cat === 'mob' ? 1.1 : 1.4), moving: e._mv > 0, flash: e.flash > 0, alpha, atk: e.atkAnim,
+                hurt: e.maxHp ? Math.max(0, 0.6 - e.hp / e.maxHp) : 0 };
+    if (d.boss && e.cat === 'mob') o.s *= 1.08;
+    if (e.kind === 'x13' && e.revealT > 0) drawRig(g, (x - Math.cos(e.angle) * 0.6) * TILE, (y - Math.sin(e.angle) * 0.6) * TILE, { ...o, alpha: 0.3, flash: false });
+    drawRig(g, x * TILE, y * TILE, o);
   }
-  if (e.cat === 'mob') {
-    const d = e.def;
-    if (d.dog) { drawHound(g, x, y, e); if (e.hp < e.maxHp) bar(g, x, y - 0.9, 18, e.hp / e.maxHp, '#9d5'); return; }
-    let alpha = 1;
-    if (d.stealth && !(e.revealT > 0) && !(e.flash > 0)) { const p = meP(); alpha = p && dist(p.x, p.y, x, y) < 4.5 ? 0.85 : 0.13; }
-    if (d.gas) { g.fillStyle = `rgba(140,220,60,${0.18 + 0.08 * Math.sin(V.frame / 7 + e.id)})`; g.beginPath(); g.arc(x * TILE, y * TILE - 12, 20, 0, TAU); g.fill(); }
-    if (e.kind === 'x13' && e.revealT > 0) { g.globalAlpha = 0.3; drawBody(g, x - Math.cos(e.angle) * 0.6, y - Math.sin(e.angle) * 0.6, e.angle, { r: d.r, body: '#5ff', head: '#5ff', walk: e.walk, zombie: true }); g.globalAlpha = 1; }
-    g.globalAlpha = alpha;
-    const shirt = !d.boss && (e.kind === 'walker' || e.kind === 'runner' || e.kind === 'crawler') ? ZSHIRTS[e.id % ZSHIRTS.length] : d.body;
-    drawBody(g, x, y, e.angle, { r: d.r, body: shirt, head: d.head, walk: e.walk + (e.kind === 'walker' ? Math.sin(e.walk * 0.5) * 0.4 : 0), flash: e.flash > 0, zombie: true, reach: e.atkAnim > 0.3 ? 1.7 : 1.2, torn: '#5a0f0f',
-      armW: e.kind === 'brute' || e.kind === 'fiend' || e.kind === 'goliath' ? 9 : e.kind === 'x13' ? 3 : 4,
-      eye: e.kind === 'fiend' ? '#ffd23a' : e.kind === 'x13' ? '#5ff' : e.kind === 'stalker' ? '#fff' : '#c01010', low: d.low,
-      fat: e.kind === 'bloater' || e.kind === 'broodmother', horns: e.kind === 'fiend', bigHead: e.kind === 'screamer' ? 1.2 : 1, legs: e.kind === 'goliath' ? '#c86a20' : '#2a2a22',
-      hat: e.kind === 'riot' ? '#1a2028' : null });
-    g.globalAlpha = 1;
-    if (d.shield) {
-      const sx2 = x * TILE + Math.cos(e.angle) * 12, sy2 = y * TILE - 16 + Math.sin(e.angle) * 6;
-      g.save(); g.translate(sx2, sy2); g.rotate(e.angle + Math.PI / 2);
-      g.fillStyle = e.flash > 0 ? '#fff' : '#1e2630'; g.fillRect(-13, -4, 26, 7); g.fillStyle = 'rgba(160,200,230,.5)'; g.fillRect(-8, -3, 16, 2); g.restore();
-    }
-    if (e.kind === 'broodmother') for (let k = 0; k < 4; k++) { g.fillStyle = 'rgba(230,210,180,.8)'; g.beginPath(); g.arc(x * TILE + Math.cos(k * 1.6 + V.frame / 30) * 16, y * TILE - 26 + Math.sin(k * 2.1) * 8, 6 + Math.sin(V.frame / 9 + k) * 2, 0, TAU); g.fill(); }
-    if (e.kind === 'goliath') { g.strokeStyle = '#777'; g.lineWidth = 2; for (const sd of [-1, 1]) { g.beginPath(); g.moveTo(x * TILE + sd * 22, y * TILE - 30); g.lineTo(x * TILE + sd * 26, y * TILE - 6); g.stroke(); } }
-    if (e.kind === 'x13') { g.strokeStyle = 'rgba(90,255,255,.7)'; g.lineWidth = 1.5; g.beginPath(); g.moveTo(x * TILE - 6, y * TILE - 34); g.lineTo(x * TILE + 2, y * TILE - 22); g.lineTo(x * TILE - 4, y * TILE - 12); g.stroke(); }
-    if (e.kind === 'spitter' && e.atkAnim > 0) { g.fillStyle = '#9f6'; g.beginPath(); g.arc(x * TILE + Math.cos(e.angle) * 8, y * TILE - 24, 3, 0, TAU); g.fill(); }
-    if (e.kind === 'bloater') { g.fillStyle = 'rgba(180,200,60,.5)'; g.beginPath(); g.arc(x * TILE, y * TILE - 16, 6 + Math.sin(V.frame / 6) * 2, 0, TAU); g.fill(); }
-    if (e.hp < e.maxHp) bar(g, x, y - (d.r > 0.5 ? 1.75 : 1.25), d.boss ? 40 : 22, e.hp / e.maxHp, d.boss ? '#f84' : '#9d5');
-  } else {
-    const d = e.def, gl = e.wpn ? GUN_LOOK[e.wpn] : null;
-    drawBody(g, x, y, e.angle, { r: 0.33, body: d.body, head: d.head, hat: d.hat, walk: e.walk, flash: e.flash > 0, gun: !!gl, gunLen: gl && gl[0], gunCol: gl && gl[1], gunW: gl && gl[2], legs: '#2a2a32', scale: d.boss ? 1.25 : 1 });
-    if (e.hp < e.maxHp) bar(g, x, y - 1.35, 24, e.hp / e.maxHp, e.team === 'player' ? '#7dff9a' : '#e84');
-  }
+  if (e.hp < e.maxHp) bar(g, x, y - (d.r > 0.5 ? 1.45 : 0.95), d.boss ? 40 : 22, e.hp / e.maxHp, e.cat === 'mob' ? (d.boss ? '#f84' : '#9d5') : e.team === 'player' ? '#7dff9a' : '#e84');
 }
-const ZSHIRTS = ['#5f8a4b', '#4a5a7a', '#7a4a3a', '#6a6a5a', '#3a4a3a', '#8a7a5a', '#5a3a4a', '#4a6a6a', '#7a6a4a', '#5a5a6a'];
+// zombie dog from above: long body, four legs trotting, head and ears
+function drawDogRig(g, wx, wy, e) {
+  const s = 9, a = e.angle, ph = e.walk * 1.6, mv = e._mv > 0 ? 1 : 0, col = e.flash > 0 ? '#f4f0ea' : e.def.body;
+  g.save(); g.translate(wx, wy - 2);
+  g.fillStyle = 'rgba(0,0,0,.28)'; g.beginPath(); g.ellipse(2, 3, s * 1.6, s * 0.8, 0, 0, TAU); g.fill();
+  g.rotate(a);
+  for (const [lx, sd, off] of [[s * 0.8, -1, 0], [s * 0.8, 1, Math.PI], [-s * 0.7, -1, Math.PI], [-s * 0.7, 1, 0]]) { const st = Math.sin(ph + off) * s * 0.45 * mv; limb(g, lx, sd * s * 0.35, lx + st, sd * s * 0.62, 3, rigShade(col, 0.75)); }
+  limb(g, -s * 1.1, 0, -s * 1.8, Math.sin(ph) * s * 0.4, 2.5, rigShade(col, 0.8)); // tail
+  blob(g, 0, 0, s * 1.25, s * 0.55, col, 0, 0.15);
+  g.strokeStyle = 'rgba(230,220,200,.6)'; g.lineWidth = 1; for (let k = -2; k <= 2; k++) { g.beginPath(); g.moveTo(k * s * 0.25, -s * 0.4); g.lineTo(k * s * 0.25, s * 0.4); g.stroke(); } // ribs
+  blob(g, s * 1.35, 0, s * 0.5, s * 0.42, e.def.head, 0, 0.2);
+  blob(g, s * 1.85, 0, s * 0.3, s * 0.22, rigShade(e.def.head, 0.85), 0, 0.1); // snout
+  for (const sd of [-1, 1]) { g.fillStyle = OL; g.beginPath(); g.moveTo(s * 1.15, sd * s * 0.3); g.lineTo(s * 1.0, sd * s * 0.75); g.lineTo(s * 1.4, sd * s * 0.35); g.fill(); }
+  g.restore();
+}
 function drawHound(g, x, y, e) {
   const px = x * TILE, py = y * TILE, a = e.angle, ca = Math.cos(a), sa = Math.sin(a), st = Math.sin(e.walk) * 3, fl = e.flash > 0;
   g.fillStyle = 'rgba(0,0,0,.3)'; g.beginPath(); g.ellipse(px, py + 2, 13, 5, 0, 0, TAU); g.fill();
@@ -1017,40 +1010,20 @@ function carTrail(p) {
 }
 function drawPlayer(g, p) {
   if (p.veh) carTrail(p);
-  if (p.ride !== undefined) { const d = G.players[p.ride]; if (d && d.veh) { const x = p.x * TILE, y = p.y * TILE - 8; g.strokeStyle = '#222'; g.lineWidth = 4; g.beginPath(); g.moveTo(x, y); g.lineTo(x + Math.cos(p.angle) * 16, y + Math.sin(p.angle) * 16); g.stroke(); g.fillStyle = p.color; g.beginPath(); g.arc(x, y, 5, 0, TAU); g.fill(); g.strokeStyle = 'rgba(0,0,0,.6)'; g.lineWidth = 1; g.stroke(); return; } }
+  if (p.ride !== undefined) { const d = G.players[p.ride]; if (d && d.veh) { drawRig(g, p.x * TILE, p.y * TILE, { s: 8, ang: p.angle, body: p.color, pants: '#2a2e3a', skin: '#f0c9a0', hat: '#2a2a2a', pose: 'gun', wpn: p.wpn, kind: 'player' }); return; } }
   if (p.veh) { drawCar(g, p.x * TILE, p.y * TILE, p.veh.ang, p.veh.color, { lights: G.phase !== 'day', brake: p.veh.spd < 1, driver: p.color }); return; }
-  const gl = GUN_LOOK[p.wpn], W0 = WEAPONS[p.wpn];
+  const W0 = WEAPONS[p.wpn];
   const ms = W0.melee && !p.down ? meleePose(p, W0) : null;
-  const swing = !!ms;
-  const pk = p.pid ? 'player_orange' : 'player_blue';
   let twist = ms ? ms.off * 0.45 : 0; const step = ms ? ms.step : 0;
   if (!W0.melee && p.reloadT > 0 && !p.down) { const pr = clamp(1 - p.reloadT / Math.max(0.3, wstatC(p.wpn, 'reload')), 0, 1); twist = Math.sin(pr * Math.PI) * 0.75; }
   const bx = p.x + Math.cos(p.angle) * step, by = p.y + Math.sin(p.angle) * step;
-  if (chrOk(pk)) {
-    drawChar(g, pk, bx, by, p.angle + twist, 48, { walk: p.walk * 0.8, flash: p.flash > 0, down: p.down });
-    if (!p.down) {
-      if (ms) drawMeleeWeapon(g, p.wpn, bx * TILE + Math.cos(p.angle + ms.off) * 9, by * TILE - 8 + Math.sin(p.angle + ms.off) * 9, p.angle + ms.off, ms);
-      else { const a = p.angle + twist, kick = Math.max(0, p.fireT || 0) > 0 && WEAPONS[p.wpn].rate ? Math.min(1, p.fireT / WEAPONS[p.wpn].rate) * 3 : 0;
-        drawGun(g, p.wpn, bx * TILE - Math.cos(a) * kick, by * TILE - 8 - Math.sin(a) * kick, a); }
-    }
-    if (p.in && p.in.crouch && !p.down) { g.fillStyle = 'rgba(160,200,255,.7)'; g.font = '10px system-ui'; g.textAlign = 'center'; g.fillText('은신', p.x * TILE, p.y * TILE + 22); }
-    return;
-  }
-  if (!p.down) { // backpack, on the side away from where you aim
-    const bpx = bx * TILE - Math.cos(p.angle + twist) * 6, bpy = by * TILE - 17 - Math.sin(p.angle + twist) * 3;
-    g.fillStyle = '#5a4a32'; roundRect(g, bpx - 7, bpy - 6, 14, 13, 4); g.fill(); g.strokeStyle = 'rgba(0,0,0,.5)'; g.lineWidth = 1; g.stroke();
-    g.fillStyle = '#7a6440'; g.fillRect(bpx - 5, bpy - 4, 10, 3);
-  }
-  if (W0.melee && !p.down) {
-    // body twists into the swing; the weapon is drawn from the hands with a motion trail
-    const a = p.angle + (ms ? ms.off : 0.5);
-    const behind = Math.sin(a) < -0.2; // weapon behind the body when swinging upward
-    const hx = bx * TILE + Math.cos(a) * 9, hy = by * TILE - 15 + Math.sin(a) * 6;
-    if (behind) drawMeleeWeapon(g, p.wpn, hx, hy, a, ms || { ext: 0, k: 0, trail: 0 });
-    drawBody(g, bx, by, p.angle + twist, { r: 0.34, body: p.color, head: '#f0c9a0', hat: '#2a2a2a', walk: p.walk, flash: p.flash > 0, gun: false, reach: 0.9, legs: '#2a2a3a', down: p.down });
-    if (!behind) drawMeleeWeapon(g, p.wpn, hx, hy, a, ms || { ext: 0, k: 0, trail: 0 });
-  } else drawBody(g, bx, by, p.angle + twist, { r: 0.34, body: p.color, head: '#f0c9a0', hat: '#2a2a2a', walk: p.walk, flash: p.flash > 0, gun: true, gunLen: gl[0], gunCol: gl[1], gunW: gl[2], legs: '#2a2a3a', down: p.down });
-  if (p.in && p.in.crouch && !p.down) { g.fillStyle = 'rgba(160,200,255,.7)'; g.font = '10px system-ui'; g.textAlign = 'center'; g.fillText('은신', p.x * TILE, p.y * TILE + 16); }
+  const kick = !W0.melee && p.fireT > 0 && W0.rate ? Math.min(1, p.fireT / W0.rate) * 3 : 0;
+  const look = { s: 11, ang: p.angle + twist + (p.down ? 1.4 : 0), walk: p.walk * 0.9, moving: !!(p.in && p.in.moving) && !p.down, body: p.color, pants: '#2a2e3a', skin: '#f0c9a0',
+                 hair: '#2a2018', hat: p.pid ? null : '#26262a', backpack: '#5a4a32', backpackStrap: true, pose: p.down ? 'none' : W0.melee ? 'melee' : 'gun', wpn: p.wpn,
+                 swing: ms ? ms.off - twist : 0.4, flash: p.flash > 0, alpha: p.down ? 0.8 : undefined, kind: 'player', kick };
+  drawRig(g, bx * TILE, by * TILE, look);
+  if (ms) { const a = p.angle + ms.off; drawMeleeWeapon(g, p.wpn, bx * TILE + Math.cos(a) * 10, by * TILE - 2 + Math.sin(a) * 10, a, ms); }
+  if (p.in && p.in.crouch && !p.down) { g.fillStyle = 'rgba(160,200,255,.7)'; g.font = '10px system-ui'; g.textAlign = 'center'; g.fillText('은신', p.x * TILE, p.y * TILE + 22); }
 }
 // ── guns seen from above, held in front of the body (muzzle distances match MUZZLE) ──
 function drawGun(g, wid, x, y, a) {
@@ -1186,6 +1159,9 @@ function drawPart(g, p) {
     case 'smoke': g.fillStyle = p.dust ? `rgba(150,130,100,${0.35 * (1 - k)})` : `rgba(90,90,90,${0.35 * (1 - k)})`; g.beginPath(); g.arc(x, y - 14 - k * 20, (p.s || 6) * (0.5 + k), 0, TAU); g.fill(); break;
     case 'spark': g.fillStyle = `rgba(255,220,150,${1 - k})`; g.fillRect(x - 2, y - 16, 4, 4); break;
     case 'swing': g.strokeStyle = `rgba(255,255,255,${0.7 * (1 - k)})`; g.lineWidth = 3; g.beginPath(); g.arc(x, y - 16, 26, p.a - 0.9, p.a + 0.9); g.stroke(); break;
+    case 'dyingRig': { // topple: spin a little, sink, flash red
+      drawRig(g, x + Math.cos(p.a) * k * 10, y + Math.sin(p.a) * k * 10, { ...p.look, ang: p.a + k * 1.4, moving: false, hurt: 1 - k * 0.5, alpha: 1 - k * 0.25, s: p.look.s * (1 - k * 0.1) }); break;
+    }
     case 'dying': { // topple over, flash red, sink
       const r = CHR.map[p.key]; if (!r) break;
       const s = p.size / Math.max(r[2], r[3]), w = r[2] * s * (1 - k * 0.12), h = r[3] * s * (1 - k * 0.12);
