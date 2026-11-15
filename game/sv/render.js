@@ -260,7 +260,7 @@ function applyFx(o) {
       if (mine) {
         V.dmgNums.push({ x: o.x + rnd(-0.2, 0.2), y: o.y, d: o.d, c: o.c, kill: o.kill, t: 0, vx: Math.cos(o.a) * 0.6 + rnd(-0.3, 0.3) });
         V.hitMark = { t: 0, kill: o.kill, c: o.c };
-        sfx(o.kill ? 'killm' : o.c ? 'critm' : 'hitm');
+        sfx(o.kill ? 'killm' : o.c ? 'critm' : 'hitm'); if (o.kill) vib(o.big ? [30, 40, 60] : 22);
         { const me2 = meP(); if (me2 && WEAPONS[me2.wpn].melee) { const hv = { sledge: 7, axe: 5, bat: 4, katana: 3 }[me2.wpn] || 2; V.shake = Math.max(V.shake, hv); if (hv >= 4 && NET.role === 'solo') V.hitStop = Math.max(V.hitStop || 0, 0.03); } }
         if (o.kill) { V.shake = Math.max(V.shake, o.big ? 9 : 4); V.hitStop = o.big ? 0.09 : 0.04; V.parts.push({ k: 'killring', x: o.x, y: o.y, t: 0, life: 0.35 }); }
         else if (o.c) V.shake = Math.max(V.shake, 3);
@@ -268,7 +268,8 @@ function applyFx(o) {
       break;
     }
     case 'flash': V.parts.push({ k: 'flash', x: o.x, y: o.y, a: o.a, t: 0, life: 0.06, big: o.w === 'shotgun' || o.w === 'sniper' || o.w === 'launcher' });
-      if (o.pid === V.me) { const kick = { pistol: 2, smg: 1.6, rifle: 2.4, shotgun: 6, sniper: 8, launcher: 7, bazooka: 13, revolver: 4 }[o.w] || 1.5; V.shake = Math.max(V.shake, kick); V.recoil = Math.min(14, (V.recoil || 0) + kick * 1.4); V.kickA = o.a; } V.lights.push({ x: o.x, y: o.y, r: 3, t: 0.06, c: '255,200,120' });
+      if (o.pid === V.me) { vib({ shotgun: 28, sniper: 35, launcher: 45, bazooka: 60, revolver: 18, smg: 8, flamer: 6 }[o.w] || 12);
+        const kick = { pistol: 2, smg: 1.6, rifle: 2.4, shotgun: 6, sniper: 8, launcher: 7, bazooka: 13, revolver: 4 }[o.w] || 1.5; V.shake = Math.max(V.shake, kick); V.recoil = Math.min(14, (V.recoil || 0) + kick * 1.4); V.kickA = o.a; } V.lights.push({ x: o.x, y: o.y, r: 3, t: 0.06, c: '255,200,120' });
       if (V.parts.length < 400) V.parts.push({ k: 'shell', x: o.x, y: o.y, z: 0.5, vx: Math.cos(o.a + 1.6) * rnd(1.5, 3), vy: Math.sin(o.a + 1.6) * rnd(1.5, 3), vz: rnd(2, 3.5), t: 0, life: 1.2, rot: rnd(0, 6) });
       break;
     case 'lightning': V.flashT = 0.35; V.shake = Math.max(V.shake, 3); setTimeout(() => sfx('thunder'), 300 + Math.random() * 900); break;
@@ -281,7 +282,7 @@ function applyFx(o) {
         for (let k = 0; k < 10; k++) V.parts.push({ k: 'smoke', x: o.x + rnd(-1, 1), y: o.y + rnd(-1, 1), t: 0, life: rnd(0.8, 1.6), s: rnd(6, 14) });
         V.lights.push({ x: o.x, y: o.y, r: o.r * 3, t: 0.3 });
         decal(o.x, o.y, o.r * 0.35, '#1d1a17', 12); sfx('boom', o.x, o.y);
-        if (me && dist(me.x, me.y, o.x, o.y) < 14) V.shake = Math.max(V.shake, 14 - dist(me.x, me.y, o.x, o.y));
+        if (me && dist(me.x, me.y, o.x, o.y) < 14) { V.shake = Math.max(V.shake, 14 - dist(me.x, me.y, o.x, o.y)); vib(Math.round(120 - dist(me.x, me.y, o.x, o.y) * 7), true); }
       } else V.lights.push({ x: o.x, y: o.y, r: 2, t: 0.15 });
       break;
     case 'splat': V.parts.push({ k: 'boom', x: o.x, y: o.y, r: 0.5, green: 1, t: 0, life: 0.3 }); decal(o.x, o.y, 0.3, '#5a8a20', 4); break;
@@ -300,11 +301,11 @@ function applyFx(o) {
       if (shells) for (let k = 0; k < 3; k++) V.parts.push({ k: 'shell', x, y, z: 0.5, vx: rnd(-1.5, 1.5), vy: rnd(-1.5, 1.5), vz: rnd(1, 2), t: 0, life: 1.4, rot: rnd(0, 6) });
       break;
     }
-    case 'lvl': V.parts.push({ k: 'lvlring', x: o.x, y: o.y, t: 0, life: 1.1 }); for (let k = 0; k < 24; k++) { const a = k / 24 * TAU; V.parts.push({ k: 'spark', x: o.x + Math.cos(a) * 0.4, y: o.y + Math.sin(a) * 0.4, t: 0, life: 0.5 }); } if (o.pid === V.me) { V.lvlBanner = { l: o.l, t: 0 }; sfx('unlock'); setTimeout(() => sfx('buy'), 150); } break;
+    case 'lvl': V.parts.push({ k: 'lvlring', x: o.x, y: o.y, t: 0, life: 1.1 }); for (let k = 0; k < 24; k++) { const a = k / 24 * TAU; V.parts.push({ k: 'spark', x: o.x + Math.cos(a) * 0.4, y: o.y + Math.sin(a) * 0.4, t: 0, life: 0.5 }); } if (o.pid === V.me) { V.lvlBanner = { l: o.l, t: 0 }; vib([60, 50, 60, 50, 140], true); sfx('unlock'); setTimeout(() => sfx('buy'), 150); } break;
     case 'tele': V.parts.push({ k: 'tele', x: o.x, y: o.y, a: o.a, len: o.len, w: o.w, t: 0, life: o.t }); break;
     case 'alarmping': V.parts.push({ k: 'ring', x: o.x, y: o.y, t: 0, life: 0.8 }); break;
     case 'float': V.floaters.push({ x: o.x, y: o.y, text: o.text, c: o.c, icon: o.icon, t: 0, life: o.icon ? 1.8 : 1.4 }); break;
-    case 'hurt': if (o.pid === V.me) { V.hurt = 1; V.shake = Math.max(V.shake, 5); sfx('hurt'); } break;
+    case 'hurt': if (o.pid === V.me) { V.hurt = 1; V.shake = Math.max(V.shake, 5); sfx('hurt'); vib(35); } break;
     case 'tile': W.tile[o.i] = o.v; updateCellMB(o.i); invalidateChunkAt(o.i); break;
     case 'cont': if (W.conts[o.id]) W.conts[o.id].looted = !!o.v; break;
     case 'newcont': if (NET.role === 'client' && !W.conts[o.id]) { const c = W.addCont(o.kind, o.x, o.y, -1); if (c) updateCellMB(idx(o.x, o.y)); } break;
@@ -312,7 +313,7 @@ function applyFx(o) {
     case 'contmove': { const c = W.conts[o.id]; if (c) { for (const k of c.cells) if (W.contAt[k] === c) { W.contAt[k] = null; updateCellMB(k); } Object.assign(c, { cells: o.cells, x: o.x, y: o.y, horiz: o.horiz, fuel: o.fuel, gone: false, looted: true }); for (const k of c.cells) { W.contAt[k] = c; updateCellMB(k); } } break; }
     case 'tp': if (o.pid === V.me) V.camInit = false; break;
     case 'over': sfx('over'); break;
-    case 'died': if (o.pid === V.me) { sfx('over'); V.shake = 10; } break;
+    case 'died': if (o.pid === V.me) { sfx('over'); V.shake = 10; vib(400, true); } break;
     case 'comm': if (o.pid === -1 || o.pid === undefined || o.pid === V.me) { for (const l of o.lines) V.comm.push(l); if (V.comm.length === o.lines.length) V.commT = 0; sfx('beep'); } break;
     case 'boss': V.boss = { por: o.por, name: o.name, t: 4.5 }; break;
     case 'ending': V.ending = { key: o.e, t: 0 }; break;

@@ -24,7 +24,7 @@ function driveMove(p, inp) {
   } else v.spd *= 0.95;
   if (Math.abs(v.spd) < 0.05) v.spd = 0;
   const ok = moveActor(p, Math.cos(v.ang) * v.spd * DT, Math.sin(v.ang) * v.spd * DT);
-  if (!ok) { if (Math.abs(v.spd) > 9) { v.hp -= Math.abs(v.spd) * 1.2; V.shake = Math.max(V.shake, Math.abs(v.spd) * 0.4); sfx('crash', p.x, p.y); } v.spd *= 0.6; }
+  if (!ok) { if (Math.abs(v.spd) > 9) { v.hp -= Math.abs(v.spd) * 1.2; V.shake = Math.max(V.shake, Math.abs(v.spd) * 0.4); sfx('crash', p.x, p.y); vib(Math.min(120, Math.abs(v.spd) * 8), true); } v.spd *= 0.6; }
   p.angle = v.ang; inp.moving = Math.abs(v.spd) > 0.3;
 }
 function step() {
@@ -64,7 +64,7 @@ function startSolo() {
   addPlayer(0); V.me = 0;
   V.fogCv = null; V.fogSeed = null;
   startGame();
-  say('1일차 — 낮 동안 물자를 모으고, 밤이 오기 전에 기지로 돌아오세요. (F1 도움말)', '#ffe9a8', -1, 1);
+  say(`1일차 — 낮 동안 물자를 모으고, 밤이 오기 전에 기지로 돌아오세요. (${I.touch ? '☰ 메뉴 → 도움말' : 'F1 도움말'})`, '#ffe9a8', -1, 1);
   if (I.touch) say('왼쪽 엄지 이동 · 오른쪽 엄지 조준/사격 · 노란 버튼 = 사용', '#ccc');
 }
 function continueSolo() {

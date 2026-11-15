@@ -61,8 +61,8 @@ function drawHud(g) {
   g.fillStyle = 'rgba(0,0,0,.5)'; roundRect(g, 8, 8, bw + 16, 72, 8); g.fill();
   { // level + XP bar
     const lv = p.lvl || 1, k = (p.xp || 0) / xpNeed(lv);
-    g.fillStyle = '#222'; g.fillRect(16, 64, bw, 6); g.fillStyle = '#8fd3ff'; g.fillRect(16, 64, bw * clamp(k, 0, 1), 6);
-    txt(g, `Lv ${lv}`, 16 + bw, 62, '#8fd3ff', 9, 'right');
+    g.fillStyle = '#222'; g.fillRect(16, 66, bw - 34, 6); g.fillStyle = '#8fd3ff'; g.fillRect(16, 66, (bw - 34) * clamp(k, 0, 1), 6);
+    txt(g, `Lv ${lv}`, 16 + bw, 73, '#8fd3ff', 10, 'right');
     if (p.pts > 0) { const pulse = 0.6 + 0.4 * Math.sin(V.frame / 6); g.globalAlpha = pulse; button(g, 8, 84, 150, 22, `⬆ 능력 포인트 ${p.pts} (K)`, () => { V.panel = { k: 'perks' }; }, { size: 11, color: '#ffd166' }); g.globalAlpha = 1; }
   }
   const statBar = (y, k, c, label) => {
@@ -283,7 +283,8 @@ function drawUI(g) {
     const host = NET.role !== 'client';
     const b = panelBox(g, 360, host ? 280 : 230, NET.role === 'solo' ? '일시정지' : '메뉴 (게임은 계속 진행됩니다)');
     button(g, b.x + 30, b.y + 60, b.w - 60, 40, '계속하기', () => { V.paused = false; });
-    button(g, b.x + 30, b.y + 110, b.w - 60, 40, '도움말', () => { V.help = true; });
+    button(g, b.x + 30, b.y + 110, b.w / 2 - 34, 40, '도움말', () => { V.help = true; });
+    button(g, b.x + b.w / 2 + 4, b.y + 110, b.w / 2 - 34, 40, VIB.on ? '진동 켜짐' : '진동 꺼짐', () => { VIB.on = !VIB.on; try { localStorage.setItem('nightfall.vib', VIB.on ? '1' : '0'); } catch (e) { /* private mode */ } vib(40, true); }, { size: 12 });
     if (host) button(g, b.x + 30, b.y + 160, b.w - 60, 40, V.savedAt ? `자동 저장됨 · ${Math.round((Date.now() - V.savedAt) / 1000)}초 전 (지금 저장)` : '저장하기', () => { saveGame(); V.paused = false; }, { color: '#7dff9a', size: 12 });
     button(g, b.x + 30, b.y + (host ? 210 : 160), b.w - 60, 40, host ? '저장하고 타이틀로' : '타이틀로 나가기', () => { if (host) saveGame(true); quitToTitle(); }, { color: '#ff9a8a' });
   }
@@ -580,6 +581,13 @@ function bindInput() {
   addEventListener('pagehide', () => { if (G && NET.role !== 'client' && !G.over) saveGame(true); });
   document.addEventListener('visibilitychange', () => { if (document.hidden) { if (G && NET.role !== 'client' && !G.over) saveGame(true); I.keys = {}; end({ changedTouches: [{ identifier: I.joy.id }, { identifier: I.aim.id }] }); if (G && NET.role === 'solo') V.paused = true; } });
 }
+// ── haptics (phones): short buzzes for shots, hits taken, explosions, kills, level-ups ──
+const VIB = { on: (() => { try { return localStorage.getItem('nightfall.vib') !== '0'; } catch (e) { return true; } })(), last: 0 };
+function vib(p, force) {
+  if (!VIB.on || !I.touch || typeof navigator === 'undefined' || !navigator.vibrate) return;
+  const now = performance.now(); if (!force && now - VIB.last < 45) return; // don't drown the motor
+  VIB.last = now; try { navigator.vibrate(p); } catch (e) { /* not allowed yet */ }
+}
 function cycleWeapon(d) {
   const owned = WEAPON_ORDER.filter(w => G.stash.owned[w]), p = meP();
   sendCmd({ c: 'wpn', w: owned[(owned.indexOf(p.wpn) + d + owned.length) % owned.length] });
@@ -672,6 +680,7 @@ function drawTouch(g) {
   });
   const B2 = [['먹기', () => sendCmd({ c: 'eat' })], ['치료', () => sendCmd({ c: 'heal' })], [I.crouch ? '은신✓' : '은신', () => { I.crouch = !I.crouch; }], ['달리기' + (I.sprint ? '✓' : ''), () => { I.sprint = !I.sprint; }]];
   if (G.stash.adrenaline > 0) B2.push(['아드', () => sendCmd({ c: 'adren' })]);
+  if (G.stash.molotov > 0 && G.stash.grenade > 0) B2.push(['화염', () => sendCmd({ c: 'molotov', d: 6 })]);
   if (V.build) { B2.length = 0; B2.push(['철거', () => V.ghost && sendCmd({ c: 'demolish', cell: V.ghost.cell })], ['종료', () => { V.build = false; }]); }
   B2.forEach(([l, fn], k) => {
     const x = bx - R * 2 - 10, y = by0 - k * (R * 2 + 8) - 4;
@@ -683,6 +692,12 @@ function drawTouch(g) {
   const topY = 12 + Math.ceil((VIEW_W < 760 ? 10 : 14) / (VIEW_W < 760 ? 5 : 7)) * 22 + 26;
   button(g, VIEW_W - 48, topY, 40, 32, '☰', () => { V.paused = true; }, { size: 16 });
   button(g, VIEW_W - 96, topY, 40, 32, '📜', () => { V.panel = { k: 'journal', tab: 0 }; }, { size: 15 });
+  button(g, VIEW_W - 144, topY, 40, 32, '🗺', () => { V.mapOpen = true; }, { size: 15 });
+  button(g, VIEW_W - 192, topY, 40, 32, meP().pts > 0 ? '⬆' + meP().pts : '⬆', () => { V.panel = { k: 'perks' }; }, { size: 13, color: meP().pts > 0 ? '#ffd166' : null });
+  // previous / next weapon
+  const wy = 86 + 44 + 6;
+  button(g, VIEW_W / 2 - 92, wy, 84, 30, '◀ 무기', () => cycleWeapon(-1), { size: 12 });
+  button(g, VIEW_W / 2 + 8, wy, 84, 30, '무기 ▶', () => cycleWeapon(1), { size: 12 });
 }
 
 // ── synth audio with distance falloff ─────────────────────────────────────
