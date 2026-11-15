@@ -6,7 +6,7 @@ function localMove(p, inp) {
   if (p.veh) return driveMove(p, inp);
   if (p.ride !== undefined) { const d = G.players[p.ride]; if (d && d.veh) { p.x = d.x - Math.sin(d.veh.ang) * 0.35; p.y = d.y + Math.cos(d.veh.ang) * 0.35; } p.in.moving = false; return; }
   const sprint = inp.sprint && p.stamina > 4 && inp.moving;
-  const sp = 4.4 * (sprint ? 1.55 : 1) * (inp.crouch ? 0.55 : 1) * groundSlow(p.x, p.y);
+  const sp = 4.4 * (sprint ? 1.55 : 1) * (inp.crouch ? 0.55 : 1) * groundSlow(p.x, p.y) * (1 + 0.05 * perk(p, 'agi'));
   if (inp.moving) { moveActor(p, inp.mx * sp * DT, inp.my * sp * DT); if (NET.role === 'client') p.walk += 0.25; }
 }
 

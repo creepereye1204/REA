@@ -300,6 +300,7 @@ function applyFx(o) {
       if (shells) for (let k = 0; k < 3; k++) V.parts.push({ k: 'shell', x, y, z: 0.5, vx: rnd(-1.5, 1.5), vy: rnd(-1.5, 1.5), vz: rnd(1, 2), t: 0, life: 1.4, rot: rnd(0, 6) });
       break;
     }
+    case 'lvl': V.parts.push({ k: 'lvlring', x: o.x, y: o.y, t: 0, life: 1.1 }); for (let k = 0; k < 24; k++) { const a = k / 24 * TAU; V.parts.push({ k: 'spark', x: o.x + Math.cos(a) * 0.4, y: o.y + Math.sin(a) * 0.4, t: 0, life: 0.5 }); } if (o.pid === V.me) { V.lvlBanner = { l: o.l, t: 0 }; sfx('unlock'); setTimeout(() => sfx('buy'), 150); } break;
     case 'tele': V.parts.push({ k: 'tele', x: o.x, y: o.y, a: o.a, len: o.len, w: o.w, t: 0, life: o.t }); break;
     case 'alarmping': V.parts.push({ k: 'ring', x: o.x, y: o.y, t: 0, life: 0.8 }); break;
     case 'float': V.floaters.push({ x: o.x, y: o.y, text: o.text, c: o.c, icon: o.icon, t: 0, life: o.icon ? 1.8 : 1.4 }); break;
@@ -1181,6 +1182,7 @@ function drawPart(g, p) {
       g.strokeStyle = 'rgba(255,90,70,.8)'; g.lineWidth = 2; g.strokeRect(0, -Wd / 2, L, Wd);
       g.restore(); break;
     }
+    case 'lvlring': g.strokeStyle = `rgba(255,214,90,${1 - k})`; g.lineWidth = 4; g.beginPath(); g.arc(x, y - 14, 10 + k * 60, 0, TAU); g.stroke(); g.fillStyle = `rgba(255,230,140,${0.3 * (1 - k)})`; g.beginPath(); g.arc(x, y - 14, 10 + k * 40, 0, TAU); g.fill(); break;
     case 'killring': g.strokeStyle = `rgba(255,80,60,${0.8 * (1 - k)})`; g.lineWidth = 3; g.beginPath(); g.arc(x, y - 14, 10 + k * 34, 0, TAU); g.stroke(); break;
     case 'mag': { g.save(); g.translate(x, y - p.z * TILE); g.rotate(p.rot + (p.z > 0 ? p.t * 8 : 0)); g.globalAlpha = Math.min(1, (p.life - p.t) * 2); g.fillStyle = '#1e1e22'; g.fillRect(-3, -6, 6, 12); g.fillStyle = '#c8a040'; g.fillRect(-2, -7, 4, 2); g.restore(); g.globalAlpha = 1; break; }
     case 'shell': { g.save(); g.translate(x, y - p.z * TILE); g.rotate(p.rot + p.t * 12 * (p.z > 0 ? 1 : 0)); g.fillStyle = '#d8b040'; g.fillRect(-2, -1, 4, 2); g.restore(); break; }

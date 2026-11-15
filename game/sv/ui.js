@@ -58,7 +58,13 @@ function drawHud(g) {
   V.btns = [];
   // stats
   const bw = small ? 150 : 210;
-  g.fillStyle = 'rgba(0,0,0,.5)'; roundRect(g, 8, 8, bw + 16, 58, 8); g.fill();
+  g.fillStyle = 'rgba(0,0,0,.5)'; roundRect(g, 8, 8, bw + 16, 72, 8); g.fill();
+  { // level + XP bar
+    const lv = p.lvl || 1, k = (p.xp || 0) / xpNeed(lv);
+    g.fillStyle = '#222'; g.fillRect(16, 64, bw, 6); g.fillStyle = '#8fd3ff'; g.fillRect(16, 64, bw * clamp(k, 0, 1), 6);
+    txt(g, `Lv ${lv}`, 16 + bw, 62, '#8fd3ff', 9, 'right');
+    if (p.pts > 0) { const pulse = 0.6 + 0.4 * Math.sin(V.frame / 6); g.globalAlpha = pulse; button(g, 8, 84, 150, 22, `⬆ 능력 포인트 ${p.pts} (K)`, () => { V.panel = { k: 'perks' }; }, { size: 11, color: '#ffd166' }); g.globalAlpha = 1; }
+  }
   const statBar = (y, k, c, label) => {
     g.fillStyle = '#222'; g.fillRect(16, y, bw, 12);
     g.fillStyle = c; g.fillRect(16, y, bw * clamp(k, 0, 1), 12);
@@ -146,7 +152,7 @@ function drawHud(g) {
     uiBtn(mx2, myy, mmW, mmH, () => { V.mapOpen = true; });
     if (T_) drawQuestHud(g, 8, myy + mmH + 22, Math.min(250, VIEW_W * 0.42));
   }
-  if (!T_) drawQuestHud(g, 8, 72 + (p.in && p.in.crouch ? 14 : 0), small ? 230 : 300);
+  if (!T_) drawQuestHud(g, 8, 86 + (p.pts > 0 ? 26 : 0) + (p.in && p.in.crouch ? 14 : 0), small ? 230 : 300);
 
   // wave warning arrow
   if (G.warn) {
@@ -270,6 +276,8 @@ function drawUI(g) {
   if (V.panel && V.panel.k === 'talk') drawTalk(g);
   if (V.panel && V.panel.k === 'journal') drawJournal(g);
   if (V.panel && V.panel.k === 'jobs') drawJobs(g);
+  if (V.panel && V.panel.k === 'perks') drawPerks(g);
+  if (V.lvlBanner) { const b2 = V.lvlBanner; b2.t += V.dt || 0.016; const a = clamp(Math.min(b2.t * 4, (2.4 - b2.t) * 2), 0, 1); if (b2.t > 2.4) V.lvlBanner = null; else { g.globalAlpha = a; txt(g, 'LEVEL UP', VIEW_W / 2, VIEW_H * 0.3, '#ffd166', VIEW_W < 700 ? 30 : 44, 'center'); txt(g, `레벨 ${b2.l} — 능력 포인트 +1 (K)`, VIEW_W / 2, VIEW_H * 0.3 + 30, '#fff', 14, 'center'); g.globalAlpha = 1; } }
   if (V.help) drawHelp(g);
   if (V.paused) {
     const host = NET.role !== 'client';
@@ -383,6 +391,17 @@ function drawBench(g) {
     });
   });
 }
+function drawPerks(g) {
+  const p = meP(), b = panelBox(g, 560, 470, `능력 — 레벨 ${p.lvl || 1} · 남은 포인트 ${p.pts || 0}`);
+  txt(g, `경험치 ${p.xp | 0}/${xpNeed(p.lvl || 1)} · 좀비·적 처치, 의뢰, 임무, 루팅으로 얻습니다`, b.x + 20, b.y + 52, '#aaa', 11, 'left', false);
+  Object.keys(PERKS_LV).forEach((k, i) => {
+    const y = b.y + 68 + i * 50, lv = perk(p, k);
+    g.fillStyle = 'rgba(255,255,255,.04)'; g.fillRect(b.x + 14, y, b.w - 28, 44);
+    txt(g, PERKS_LV[k].name, b.x + 26, y + 19, '#fff', 14); txt(g, PERKS_LV[k].desc, b.x + 26, y + 36, '#aaa', 11, 'left', false);
+    for (let q = 0; q < PERK_MAX; q++) { g.fillStyle = q < lv ? '#ffd166' : '#333'; g.fillRect(b.x + 300 + q * 18, y + 15, 14, 14); }
+    if (lv < PERK_MAX) button(g, b.x + b.w - 80, y + 7, 56, 30, '+', () => sendCmd({ c: 'perk', s: k }), { disabled: !(p.pts > 0), size: 16 });
+  });
+}
 function drawSkills(g, b) {
   const S = G.stash, owned = WEAPON_ORDER.filter(w => S.owned[w]);
   const rh = Math.min(66, (b.h - 60) / Math.max(owned.length, 1));
@@ -494,6 +513,7 @@ function bindInput() {
     if (e.code === 'F1') { V.help = !V.help; return; }
     if (e.code === 'KeyM') { V.mapOpen = !V.mapOpen; return; }
     if (e.code === 'KeyJ') { V.panel = V.panel && V.panel.k === 'journal' ? null : { k: 'journal', tab: 0 }; return; }
+    if (e.code === 'KeyK' && G) { V.panel = V.panel && V.panel.k === 'perks' ? null : { k: 'perks' }; return; }
     if (anyModal()) { if (e.code === 'KeyE' && V.panel) V.panel = null; return; }
     const digit = e.code.startsWith('Digit') ? +e.code.slice(5) : -1;
     if (V.build && digit >= 0 && digit <= 9) { const i = digit === 0 ? 9 : digit - 1; if (STRUCT_ORDER[i]) V.buildSel = STRUCT_ORDER[i]; return; }

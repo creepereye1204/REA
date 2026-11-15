@@ -55,7 +55,7 @@ function makePlayer(pid) {
     hp: 100, maxHp: 100, hunger: 100, stamina: 100, wpn: 'pistol', mag: { pistol: 12, machete: 0 },
     reloadT: 0, fireT: 0, prevFire: false, down: false, downT: 0, dead: false, healT: 0, flash: 0, walk: 0,
     in: { fire: false, use: false, sprint: false, crouch: false, ax: 0, ay: 0, moving: false },
-    useT: 0, useKey: null, useP: 0, useLabel: '', noAmmoT: 0, joined: true,
+    useT: 0, useKey: null, useP: 0, useLabel: '', noAmmoT: 0, joined: true, lvl: 1, xp: 0, pts: 0, perks: {},
   };
 }
 function addPlayer(pid) { const p = makePlayer(pid); G.players[pid] = p; return p; }
@@ -92,6 +92,8 @@ function spawnHuman(kind, x, y, o = {}) {
   if (d.npc === 'dr_han' || kind === 'lost') h.hunger = 0;
   if (o.tag && o.tag.startsWith('camp')) { h.inv.cash += 120; h.inv.gold = 1; }
   if (d.team === 'bandit') { h.inv.cash += 15 + SR.i(40); if (d.wpn && !WEAPONS[d.wpn].melee) h.inv['mag:' + d.wpn] = 1 + SR.i(2); if (SR.chance(0.3)) h.inv.grenade = 1; }
+  if (d.team === 'rebel') { h.inv['mag:' + d.wpn] = 1 + SR.i(2); if (SR.chance(0.25)) h.inv.armor = 1; if (SR.chance(0.3)) h.inv.grenade = 1; h.inv.cash += 20 + SR.i(40); }
+  if (kind === 'rebel_boss') { h.inv['wpn:bazooka'] = 1; h.inv['mag:bazooka'] = 2; h.inv.gold = 2; h.inv.cash += 300; }
   if (kind === 'bandit_boss') { h.inv.cash += 150; h.inv['wpn:rifle'] = 1; h.inv['mag:rifle'] = 3; }
   if (kind === 'guard') h.inv['mag:rifle'] = 1 + SR.i(2);
   if (d.shop && !h.stock) h.stock = makeStock(kind, SR);
@@ -182,6 +184,7 @@ function hostile(a, b) {
   if (ta === 'zombie' || tb === 'zombie') return true;
   if (ta === 'bandit' || tb === 'bandit') return true;
   if (ta === 'cult' || tb === 'cult') return true;
+  if (ta === 'rebel' || tb === 'rebel') return !(ta === 'merchant' || tb === 'merchant' || ta === 'village' || tb === 'village'); // rebels fight the government, you and the dead
   if (ta === 'military' || tb === 'military') return (ta === 'player' || tb === 'player') && G.milHostile;
   if ((ta === 'village' && tb === 'player') || (ta === 'player' && tb === 'village')) {
     const v = ta === 'village' ? a.village : b.village;
@@ -201,6 +204,17 @@ function allActors() { const a = G.ents.slice(); for (const p of G.players) if (
 
 function magCap(wid) { const u = (G.stash.upg[wid] || {}); return Math.round(WEAPONS[wid].mag * (1 + UPG_STATS.mag.per * (u.mag || 0))); }
 const hasSkill = (wid, sk) => !!(G.stash.skills && G.stash.skills[wid] && G.stash.skills[wid][sk]);
+const perk = (p, k) => (p && p.perks && p.perks[k]) || 0;
+function gainXp(p, n, why) {
+  if (!p || !p.joined || n <= 0) return;
+  p.xp += n;
+  while (p.xp >= xpNeed(p.lvl)) {
+    p.xp -= xpNeed(p.lvl); p.lvl++; p.pts++; p.hp = p.maxHp; p.stamina = 100;
+    fx({ k: 'lvl', pid: p.pid, x: p.x, y: p.y, l: p.lvl });
+    say(`⬆ ${p.name} 레벨 ${p.lvl}! 능력 포인트 +1 — [K] 키로 능력 선택`, '#ffd166', p.pid, 1);
+  }
+}
+function xpAll(n) { for (const p of G.players) if (p && p.joined) gainXp(p, n); }
 function wstat(wid, stat) {
   const w = WEAPONS[wid], u = G.stash.upg[wid] || {}, l = u[stat] || 0;
   if (stat === 'dmg') return w.dmg * (1 + UPG_STATS.dmg.per * l);
@@ -239,6 +253,7 @@ function rollLoot(kind) {
 // ── noise ──────────────────────────────────────────────────────────────────
 function makeNoise(x, y, r, src) {
   if (G.weather && G.weather.k !== 'clear' && G.weather.k !== 'fog') r *= 1 - 0.3 * G.weather.i;
+  if (src && src.cat === 'player') r *= 1 - 0.12 * perk(src, 'sneak');
   if (r < 2) return;
   for (const e of G.ents) {
     if (e.cat !== 'mob' || e.target) continue;
@@ -314,6 +329,7 @@ function kill(e, src) {
   }
   questOnKill(e, src);
   jobsOnKill(e, src);
+  if (byPlayer) { const xp = Math.round(e.cat === 'mob' ? Math.max(3, e.maxHp / 14) * (e.def.boss ? 3 : 1) : (e.def.boss ? 80 : 14)); gainXp(src.cat === 'player' ? src : null, xp); for (const q of G.players) if (q && q !== src && q.joined && src.cat === 'player') gainXp(q, Math.round(xp * 0.4)); }
 }
 function addHazard(k, x, y, r, t, dps, team) { G.hazards.push({ k, x, y, r, t, dps, team }); if (G.hazards.length > 40) G.hazards.shift(); }
 function updateHazards() {
@@ -430,9 +446,9 @@ function hitscan(sh, x, y, a, range, dmg, pierce = 1, color) {
 function fireGun(sh, wid, a, opt = {}) {
   const w = WEAPONS[wid];
   const mx = sh.x + Math.cos(a) * 0.45, my = sh.y + Math.sin(a) * 0.45;
-  const dmg = (sh.cat === 'player' ? wstat(wid, 'dmg') : w.dmg) * (opt.dmgMul || 1);
+  const dmg = (sh.cat === 'player' ? wstat(wid, 'dmg') * (1 + 0.08 * perk(sh, 'aim')) : w.dmg) * (opt.dmgMul || 1);
   const mine = sh.cat === 'player';
-  const spread = w.spread * (opt.spreadMul || 1) * (sh.in && sh.in.crouch ? 0.6 : 1) * (mine && hasSkill(wid, 'tight') ? 0.6 : 1);
+  const spread = w.spread * (opt.spreadMul || 1) * (sh.in && sh.in.crouch ? 0.6 : 1) * (mine && hasSkill(wid, 'tight') ? 0.6 : 1) * (mine ? 1 - 0.08 * perk(sh, 'aim') : 1);
   const rangeK = mine && hasSkill(wid, 'range') ? 1.3 : 1, pierceAdd = mine && hasSkill(wid, 'pierce') ? 1 : 0;
   if (w.rocket) {
     const rs = w.rspeed || 16;
@@ -514,12 +530,13 @@ function updatePlayer(p) {
     return;
   }
   // survival stats
-  p.hunger = Math.max(0, p.hunger - 100 / (6.5 * 60 * FPS * 1.1));
+  p.hunger = Math.max(0, p.hunger - 100 / (6.5 * 60 * FPS * 1.1) * (1 - 0.1 * perk(p, 'endure')));
+  p.maxHp = 100 + 15 * perk(p, 'vit');
   if (p.hunger <= 0) { p.hp -= 0.6 * DT; if (p.hp <= 0) downPlayer(p); }
   else if (p.hunger > 50 && p.hp < p.maxHp) p.hp = Math.min(p.maxHp, p.hp + 0.35 * DT);
   if (p.healT > 0) { p.healT -= DT; p.hp = Math.min(p.maxHp, p.hp + 25 * DT); }
   if (p.adrT > 0) { p.adrT -= DT; p.stamina = 100; }
-  if (p.in.sprint && p.in.moving && p.stamina > 0) p.stamina = Math.max(0, p.stamina - 22 * DT);
+  if (p.in.sprint && p.in.moving && p.stamina > 0) p.stamina = Math.max(0, p.stamina - 22 * DT * (1 - 0.15 * perk(p, 'endure')));
   else p.stamina = Math.min(100, p.stamina + 14 * DT);
   if (p.in.moving) p.walk += 0.25;
   p.angle = Math.atan2(p.in.ay, p.in.ax) || p.angle;
@@ -541,7 +558,7 @@ function updatePlayer(p) {
   } else {
     const fire = p.in.fire && (w.auto || w.melee || !p.prevFire);
     if (fire && p.fireT <= 0) {
-      if (w.melee) { const cl = hasSkill(wid, 'cleave') ? 1.5 : 1; melee(p, wstat(wid, 'dmg'), w.range * (cl > 1 ? 1.25 : 1), w.arc * cl); p.fireT = w.rate; }
+      if (w.melee) { const cl = hasSkill(wid, 'cleave') ? 1.5 : 1; melee(p, wstat(wid, 'dmg') * (1 + 0.12 * perk(p, 'str')), w.range * (cl > 1 ? 1.25 : 1), w.arc * cl); p.fireT = w.rate; }
       else if ((p.mag[wid] || 0) > 0) { p.mag[wid]--; fireGun(p, wid, p.angle); p.fireT = wstat(wid, 'rate'); }
       else startReload(p, true);
     }
@@ -569,7 +586,7 @@ function startReload(p, auto) {
     if (p.noAmmoT <= 0) { say(`${w.name} 예비 탄창이 없습니다 — 상인에게 구매하세요`, '#ff9a8a', p.pid); sfxAt('empty', p.x, p.y); p.noAmmoT = 1.2; }
     return;
   }
-  p.reloadT = wstat(wid, 'reload'); p.reloadW = wid;
+  p.reloadT = wstat(wid, 'reload') * (1 - 0.1 * perk(p, 'hands')); p.reloadW = wid;
   fx({ k: 'reload', x: +p.x.toFixed(2), y: +p.y.toFixed(2), a: +p.angle.toFixed(2), pid: p.pid, t: +p.reloadT.toFixed(2), w: wid });
 }
 // magazines are real: the fullest spare goes in, the partial one goes back to the pouch
@@ -630,7 +647,7 @@ function findInteract(p, S, onlyInstant) {
       if (d < 1.1) {
         const steal = c.village >= 0 && !(S.vh[c.village] > 0 && villageEmpty(S, c.village));
         const CD = CONTAINERS[c.kind];
-        consider({ key: 'c' + c.id, kind: 'cont', c, x: c.x, y: c.y, time: CD.time * 2.3 * (steal && p.in.crouch ? 1.3 : 1), steal, label: steal ? `${CD.name} 훔치기 (들키면 전투!)` : `${CD.name} 뒤지기 — 소리가 납니다` }, d);
+        consider({ key: 'c' + c.id, kind: 'cont', c, x: c.x, y: c.y, time: CD.time * 2.3 * (steal && p.in.crouch ? 1.3 : 1) * (1 - 0.1 * perk(p, 'hands')), steal, label: steal ? `${CD.name} 훔치기 (들키면 전투!)` : `${CD.name} 뒤지기 — 소리가 납니다` }, d);
       }
     }
     const tt = W.tile[i], G_ = GATHER[tt];
@@ -831,7 +848,7 @@ function completeInteract(p, it) {
     case 'revive': it.q.down = false; it.q.hp = 40; say(`${it.q.name} 부활!`, '#7dff9a'); break;
     case 'cont': {
       const c = it.c; c.looted = true; fx({ k: 'cont', id: c.id, v: 1 });
-      const items = rollLoot(c.kind);
+      const items = rollLoot(c.kind); gainXp(p, 3);
       questLootBonus(c, items);
       let n = 0; for (const k in items) giveItem(k, items[k], p.pid, c.x, c.y - 0.35 * n++);
       maybeNote(c);
@@ -900,7 +917,7 @@ function checkWitness(p, it, final) {
   const night = G.phase === 'night';
   for (const e of G.ents) {
     if (e.dead || e.team !== 'village' || e.village !== v || e === it.e) continue;
-    const range = (p.in.crouch ? 4.5 : 8) * (night ? 0.65 : 1);
+    const range = (p.in.crouch ? 4.5 : 8) * (night ? 0.65 : 1) * (1 - 0.12 * perk(p, 'sneak'));
     const d = dist(e.x, e.y, p.x, p.y);
     if (d > range) continue;
     const facing = Math.abs(angDiff(e.angle, Math.atan2(p.y - e.y, p.x - e.x))) < 1.15;
@@ -968,6 +985,7 @@ function doCmd(pid, c) {
       break;
     }
     case 'job': jobCmd(p, c); break;
+    case 'perk': if (PERKS_LV[c.s] && p.pts > 0 && perk(p, c.s) < PERK_MAX) { p.pts--; p.perks[c.s] = perk(p, c.s) + 1; if (c.s === 'vit') { p.maxHp = 100 + 15 * p.perks.vit; p.hp += 15; } say(`${p.name}: ${PERKS_LV[c.s].name} Lv.${p.perks[c.s]}`, '#ffd166', p.pid); sfxAt('unlock', p.x, p.y); } break;
     case 'respawn': if (p.dead && p.respawnT < 4) respawnPlayer(p); break;
     case 'build': {
       const def = STRUCTS[c.t]; if (!def) break;
@@ -1339,9 +1357,10 @@ function updateHuman(e) {
     }
     case 'military': {
       if (e.def.shop) { if (dist(e.x, e.y, e.home.x, e.home.y) > 0.5) pathTo(e, e.home.x, e.home.y, sp); else faceNearestPlayer(e); return; }
-      return wanderIn(e, poiOf('military'), sp * 0.4);
+      return wanderIn(e, e.poi ? W.pois.find(P => P.key === e.poi) || poiOf('military') : poiOf('military'), sp * 0.4);
     }
     case 'cult': return wanderIn(e, poiOf('church'), sp * 0.45);
+    case 'rebel': return wanderIn(e, e.poi ? W.pois.find(P => P.key === e.poi) : poiOf('rebelbase'), sp * 0.45);
     case 'merchant': {
       if (G.phase !== 'day' && G.phase !== 'dawn') { pathTo(e, W.base.cx + 0.5, W.base.cy - 40, sp); if (e.y < W.base.cy - 30 && !G.players.some(p => p && dist(p.x, p.y, e.x, e.y) < 16)) e.dead = true; return; }
       if (dist(e.x, e.y, e.home.x, e.home.y) > 0.5) pathTo(e, e.home.x, e.home.y, sp); else faceNearestPlayer(e);
@@ -1615,6 +1634,15 @@ function repopulateLandmarks() {
   if (church && !G.Q.flags.priestDead) {
     const n = all.filter(e => e.team === 'cult' && !e.dead).length;
     for (let k = n; k < 6; k++) { const pt = randomFreeCell(SR, church.x + 2, church.y + 13, church.x + church.w - 2, church.y + church.h - 2, 'cult'); if (pt) spawnHuman(SR.pick(['cultist', 'cultist', 'zealot']), pt.x, pt.y); }
+  }
+  // the war goes on: both sides reinforce the front, rebels hold their base until the commander falls
+  const wz = poiOf('warzone');
+  if (wz) {
+    const n = (team, poi) => all.filter(e => e.team === team && e.poi === poi && !e.dead).length;
+    for (let k = n('military', 'warzone'); k < 5 && !G.milHostile; k++) { const pt = randomFreeCell(SR, wz.x + 1, wz.y + 2, wz.x + 6, wz.y + wz.h - 2, 'military'); if (pt) spawnHuman(SR.pick(['soldier', 'soldier', 'soldier_heavy']), pt.x, pt.y, { poi: 'warzone' }); }
+    for (let k = n('rebel', 'warzone'); k < (G.Q.flags.dead_rebel_boss ? 3 : 6); k++) { const pt = randomFreeCell(SR, wz.x + wz.w - 6, wz.y + 2, wz.x + wz.w - 1, wz.y + wz.h - 2, 'rebel'); if (pt) spawnHuman(SR.pick(['rebel', 'rebel', 'rebel_mg', 'rebel_rpg', 'rebel_sniper']), pt.x, pt.y, { poi: 'warzone' }); }
+    const rb = poiOf('rebelbase');
+    if (rb && !G.Q.flags.dead_rebel_boss) for (let k = n('rebel', 'rebelbase'); k < 9; k++) { const pt = randomFreeCell(SR, rb.x + 2, rb.y + 9, rb.x + rb.w - 2, rb.y + rb.h - 2, 'rebel'); if (pt) spawnHuman(SR.pick(['rebel', 'rebel_mg', 'rebel_rpg', 'rebel_sniper']), pt.x, pt.y, { poi: 'rebelbase' }); }
   }
   const mil = poiOf('military');
   if (mil && !G.milHostile) {

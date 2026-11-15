@@ -20,7 +20,7 @@ function saveGame(quiet) {
       extra: W.conts.slice(W.nConts0).map(c => ({ kind: c.kind, x: Math.floor(c.x), y: Math.floor(c.y) })),
       looted: W.conts.filter(c => c.looted).map(c => c.id),
       cars: W.conts.filter(c => c.kind === 'car' && (c.gone || c.fuel !== undefined)).map(c => ({ id: c.id, cells: c.cells, x: c.x, y: c.y, horiz: c.horiz, fuel: c.fuel, hp: c.hp, gone: !!c.gone })),
-      players: G.players.map(p => p && { x: p.x, y: p.y, hp: p.hp, hunger: p.hunger, stamina: p.stamina, wpn: p.wpn, mag: p.mag, armor: p.armor || 0, angle: p.angle, veh: p.veh || null, r: p.r }),
+      players: G.players.map(p => p && { x: p.x, y: p.y, hp: p.hp, hunger: p.hunger, stamina: p.stamina, wpn: p.wpn, mag: p.mag, armor: p.armor || 0, angle: p.angle, veh: p.veh || null, r: p.r, lvl: p.lvl, xp: p.xp, pts: p.pts, perks: p.perks, maxHp: p.maxHp }),
       fog: V.seen && V.fogSeed === W.seed ? Array.from(V.seen).join('') : null,
     };
     localStorage.setItem(SAVE_KEY, JSON.stringify(data));

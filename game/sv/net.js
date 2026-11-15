@@ -6,7 +6,7 @@ const NET = { role: 'solo', peer: null, conn: null, code: '', lastSnap: 0, ping:
 const PEER_PREFIX = 'cellsiege-nf-';
 const STRUCT_TYPES = ['core', 'bench', 'radio', 'gate', ...STRUCT_ORDER];
 const SHOT_KINDS = ['grenade', 'rocket', 'spit', 'fireball', 'molotov'];
-const TAGS = ['', 'elder0', 'elder1', 'elder2', 'elder3', 'yoon', 'dr_han', 'priest', 'mechanic', 'child', 'broodmother', 'x13', 'goliath', 'camp0', 'camp1', 'camp2', 'camp3'];
+const TAGS = ['', 'rebel_boss', 'elder0', 'elder1', 'elder2', 'elder3', 'yoon', 'dr_han', 'priest', 'mechanic', 'child', 'broodmother', 'x13', 'goliath', 'camp0', 'camp1', 'camp2', 'camp3'];
 const tagTitle = t => t.startsWith('camp') ? CAMP_BOSSES[+t[4]] : t === 'mechanic' ? '정비공 백도윤' : t === 'child' ? '박민호' : null;
 const MODES = ['idle', 'wait', 'follow', 'guard', 'raid', 'farm'];
 const PERK_LIST = Object.keys(PERKS);
@@ -105,7 +105,7 @@ function encodeSnap(forPid) {
     st: G.stash, sh: shops,
     P: G.players.map(p => p && { j: p.joined, x: r2(p.x) / 100, y: r2(p.y) / 100, a: r2(p.angle) / 100, hp: p.hp, hu: p.hunger, sta: p.stamina, w: p.wpn, m: p.mag,
                                  rl: p.reloadT, dn: p.down, dd: p.dead, dt: p.downT, up: p.useP, ul: p.useLabel, f: p.flash, ft: p.fireT, cr: p.in.crouch, mv: p.in.moving,
-                                 ar: p.armor | 0, ad: p.adrT > 0 ? 1 : 0, rs: p.respawnT || 0, rd: p.ride === undefined ? null : p.ride, vh: p.veh ? [p.veh.color, r2(p.veh.ang), r2(p.veh.spd), p.veh.fuel | 0, p.veh.hp | 0] : 0 }),
+                                 ar: p.armor | 0, ad: p.adrT > 0 ? 1 : 0, rs: p.respawnT || 0, lv: p.lvl, xp: p.xp, pt: p.pts, pk: p.perks, mh: p.maxHp, rd: p.ride === undefined ? null : p.ride, vh: p.veh ? [p.veh.color, r2(p.veh.ang), r2(p.veh.spd), p.veh.fuel | 0, p.veh.hp | 0] : 0 }),
     E, S,
     D: G.drops.map(b => [b.id, r2(b.x), r2(b.y), b.from, dropTop(b)]),
     X: G.shots.map(s => [SHOT_KINDS.indexOf(s.k), r2(s.x), r2(s.y), r2(s.z || 0)]),
@@ -168,7 +168,7 @@ function clientSnap(s) {
     if (!q) return;
     const p = G.players[pid] || (G.players[pid] = makePlayer(pid));
     p.joined = q.j; p.hp = q.hp; p.hunger = q.hu; p.stamina = q.sta; p.wpn = q.w; p.mag = q.m; p.reloadT = q.rl; p.down = q.dn; p.dead = q.dd; p.downT = q.dt;
-    p.respawnT = q.rs; p.useP = q.up; p.useLabel = q.ul; p.flash = q.f; p.fireT = q.ft; p.armor = q.ar; p.adrT = q.ad ? 1 : 0;
+    p.respawnT = q.rs; p.useP = q.up; p.useLabel = q.ul; p.lvl = q.lv; p.xp = q.xp; p.pts = q.pt; p.perks = q.pk || {}; p.maxHp = q.mh || 100; p.flash = q.f; p.fireT = q.ft; p.armor = q.ar; p.adrT = q.ad ? 1 : 0;
     p.ride = q.rd === null ? undefined : q.rd;
     if (q.vh) {
       if (!p.veh) { p.veh = { id: -1, color: q.vh[0], ang: q.vh[1] / 100, spd: 0, fuel: q.vh[3], hp: q.vh[4] }; p.r = 0.48; }

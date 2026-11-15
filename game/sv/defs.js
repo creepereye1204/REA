@@ -62,6 +62,18 @@ const UPG_STATS = {
   reload: { name: '재장전',    per: 0.12 },   // time ×(1−0.12·lvl)
 };
 const UPG_MAX = 5;
+// character levels: XP from kills, jobs, quests and loot; each level gives a point for a perk
+const PERKS_LV = {
+  vit:    { name: '체력',     desc: '최대 체력 +15' },
+  agi:    { name: '민첩',     desc: '이동 속도 +5%' },
+  str:    { name: '근력',     desc: '근접 피해 +12%' },
+  aim:    { name: '사격',     desc: '총기 피해 +8%, 탄 퍼짐 -8%' },
+  hands:  { name: '손재주',   desc: '재장전·수색 시간 -10%' },
+  sneak:  { name: '은밀',     desc: '내는 소음·발각 거리 -12%' },
+  endure: { name: '지구력',   desc: '기력 소모 -15%, 허기 -10%' },
+};
+const PERK_MAX = 5;
+const xpNeed = lvl => 60 + lvl * 40;
 // weapon skills: one-time unlocks per weapon at the workbench
 const WSKILLS = {
   pierce: { name: '관통탄',     desc: '총알이 적을 1명 더 관통',         cost: { cash: 160, parts: 2 },  gun: true },
@@ -128,9 +140,15 @@ const HUMANS = {
   cult_priest:    { name: '붉은 사제 마르코', team: 'cult',  hp: 900, speed: 2.4, wpn: 'smg',     body: '#9a1010', head: '#e8d8c8', hat: '#600', acc: 1.6, boss: true, molotov: true, por: 'por_priest' },
   elder:          { name: '마을 대표',     team: 'village',  hp: 120, speed: 2.2, wpn: null,      body: '#6a6a50', head: '#e0b890', hat: '#4a4a3a', acc: 1, coward: true },
   lost:           { name: '실종자',        team: 'player',   hp: 90,  speed: 3.0, wpn: null,      body: '#5a7a9a', head: '#e8c4a0', hat: null, acc: 1, coward: true },
+  // rebels against the government remnant
+  rebel:          { name: '반란군 소총수',   team: 'rebel',    hp: 140, speed: 2.6, wpn: 'rifle',    body: '#5a4a3a', head: '#d0a880', hat: '#2a2a20', acc: 1.7, armor: 0.85 },
+  rebel_mg:       { name: '반란군 기관총수', team: 'rebel',    hp: 190, speed: 2.2, wpn: 'smg',      body: '#4a3a2a', head: '#d0a880', hat: '#3a2a1a', acc: 1.5, armor: 0.75 },
+  rebel_rpg:      { name: '반란군 RPG병',    team: 'rebel',    hp: 150, speed: 2.3, wpn: 'launcher', body: '#5a4030', head: '#d0a880', hat: '#6a2a1a', acc: 1.2, armor: 0.85, keepFar: true },
+  rebel_sniper:   { name: '반란군 저격수',   team: 'rebel',    hp: 110, speed: 2.4, wpn: 'sniper',   body: '#3a4430', head: '#d0a880', hat: '#3a4430', acc: 1.6, keepFar: true },
+  rebel_boss:     { name: '반란군 사령관 차무혁', team: 'rebel', hp: 1100, speed: 2.5, wpn: 'rifle', body: '#2a2420', head: '#c89870', hat: '#8a2a1a', acc: 2.1, armor: 0.6, boss: true, por: 'por_bandit_boss' },
   dr_han:         { name: '한서진 박사',   team: 'player',   hp: 160, speed: 2.8, wpn: 'pistol',  body: '#d8d8d0', head: '#e8c4a0', hat: null, acc: 1.4, npc: 'dr_han' },
 };
-const FACTION_NAMES = { bandit: '약탈단', village: '마을', merchant: '상인', military: '잔존군', cult: '붉은 새벽 교단', zombie: '좀비', player: '아군' };
+const FACTION_NAMES = { rebel: '반란군', bandit: '약탈단', village: '마을', merchant: '상인', military: '잔존군', cult: '붉은 새벽 교단', zombie: '좀비', player: '아군' };
 const SURVIVOR_NAMES = ['민준', '서연', '지호', '하은', '도윤', '수아', '예준', '지우', '시우', '하린', '주원', '윤서', '현우', '채원', '건우', '다은', '우진', '소율'];
 // difficulty trim: zombies a little softer than the table above
 for (const k in MOBS) { MOBS[k].hp = Math.round(MOBS[k].hp * 0.88); MOBS[k].dmg = Math.round(MOBS[k].dmg * 0.9); }

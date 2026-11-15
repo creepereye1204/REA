@@ -48,6 +48,8 @@ const LANDMARKS = [
   { key: 'farm',     name: '햇살 농장',            w: 30, h: 24, ring: [60, 200] },
   { key: 'school',   name: '초등학교',            w: 24, h: 20, ring: [50, 160] },
   { key: 'helipad',  name: '옥상 헬기장',          w: 20, h: 20, ring: [190, 340] },
+  { key: 'rebelbase', name: '반란군 점령지',       w: 30, h: 24, ring: [200, 340] },
+  { key: 'warzone',  name: '격전지 — 정부군 방어선', w: 34, h: 26, ring: [130, 260] },
 ];
 // ── Generic structures, scattered Minecraft-style: one roll per region, chosen by biome ──
 const GENERIC = {
@@ -170,6 +172,26 @@ function structureBuilders(R, h) {
         fill(mx - 3, my - 3, 7, 7, T.PAD);
         addCont('milcrate', x + 3, y + 3, -1); addCont('milcrate', x + w - 4, y + 3, -1);
         trig('flare', mx, my + 4);
+        break;
+      }
+      case 'rebelbase': {
+        fill(x, y, w, hh, T.CAMPDIRT); fence(x, y, w, hh, gateGaps(P));
+        buildHouse(x + 3, y + 3, 10, 8, 'barracks', 'S'); buildHouse(x + w - 13, y + 3, 10, 8, 'bunker', 'S');
+        for (let i = x + 2; i < x + w - 2; i += 2) if (Math.abs(i - mx) > 2) set(i, y + hh - 5, T.FENCE); // sandbags
+        for (const [tx, ty] of [[x + 3, y + 14], [x + w - 7, y + 14]]) for (let j = 0; j < 2; j++) for (let i = 0; i < 4; i++) set(tx + i, ty + j, T.TENT);
+        addCont('milcrate', mx - 2, my + 2, -1); addCont('ammobox', mx + 2, my + 2, -1); addCont('milcrate', x + 4, y + hh - 3, -1); addCont('safe', x + w - 4, y + hh - 3, -1);
+        spawn('rebel_boss', mx, my, { tag: 'rebel_boss', poi: 'rebelbase' });
+        for (let k = 0; k < 9; k++) spawn(R.pick(['rebel', 'rebel', 'rebel_mg', 'rebel_rpg', 'rebel_sniper']), x + 3 + R.i(w - 6), y + 10 + R.i(hh - 14), { poi: 'rebelbase' });
+        break;
+      }
+      case 'warzone': { // a no-man's-land: government trench line on the west, rebel line on the east
+        fill(x, y, w, hh, T.RUBBLE);
+        for (let k = 0; k < 40; k++) set(x + R.i(w), y + R.i(hh), R.chance(0.5) ? T.ASH : T.GRAVEL);
+        for (let j = y + 2; j < y + hh - 2; j++) { if ((j - y) % 6 !== 3) set(x + 6, j, T.FENCE); if ((j - y) % 6 !== 0) set(x + w - 7, j, T.FENCE); }
+        for (let k = 0; k < 5; k++) { const rx = mx - 4 + R.i(9), ry = y + 3 + R.i(hh - 6); set(rx, ry, T.RUIN); set(rx + 1, ry, T.RUIN); } // wrecked armour
+        addCont('milcrate', x + 3, y + 3, -1); addCont('ammobox', x + w - 4, y + hh - 4, -1); addCont('milcrate', x + 3, y + hh - 4, -1);
+        for (let k = 0; k < 5; k++) spawn(R.pick(['soldier', 'soldier', 'soldier_heavy']), x + 2 + R.i(4), y + 3 + R.i(hh - 6), { poi: 'warzone' });
+        for (let k = 0; k < 6; k++) spawn(R.pick(['rebel', 'rebel', 'rebel_mg', 'rebel_rpg', 'rebel_sniper']), x + w - 5 + R.i(3), y + 3 + R.i(hh - 6), { poi: 'warzone' });
         break;
       }
       // ── generic only ──

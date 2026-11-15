@@ -65,6 +65,7 @@ function jobCmd(p, c) {
     j.taken = true; say('의뢰 수락: ' + jobText(j), '#cfe8ff', p.pid); sfxAt('click', p.x, p.y);
   } else if (c.a === 'turnin' && j.taken && !j.done && jobReady(j)) {
     if (j.k === 'fetch') G.stash[j.item] -= j.n;
+    xpAll(45);
     j.done = true; G.stash.cash += j.reward;
     if (G.Q && j.v < G.Q.rep.length) { G.Q.rep[j.v] = Math.min(5, (G.Q.rep[j.v] || 0) + 1); qBump(); }
     const bonus = SR.pick(['meds', 'grenade', 'bandage', 'molotov', 'adrenaline', 'mag:rifle', 'mag:shotgun']); giveItem(bonus, 1, p.pid);

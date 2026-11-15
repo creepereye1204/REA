@@ -15,6 +15,7 @@ const CAST = {
   child:   { name: '박민호',            por: 'por_survivor' },
   mechanic:{ name: '정비공 백도윤',      por: 'por_survivor' },
   you:     { name: '나',               por: null },
+  rebel_boss: { name: '반란군 사령관 차무혁', por: 'por_bandit_boss' },
 };
 
 // ── quests ────────────────────────────────────────────────────────────────
@@ -80,6 +81,15 @@ const QUESTS = {
   e5: { line: 'evac', title: '탈출 ⑤  마지막 헬기', giver: 'yoon',
         desc: '옥상 헬기장에서 신호탄을 쏘고 헬기가 도착할 때까지 120초 동안 버티자.',
         obj: { t: 'defend', trig: 'flare', secs: 120 }, poi: 'helipad', ending: 'evac' },
+  // rebel war
+  r1: { line: 'rebel', title: '내전 ①  격전지', giver: 'yoon', next: 'r2',
+        desc: '정부군 방어선이 반란군에게 밀리고 있다. 격전지로 가서 반란군 15명을 처치하자. 정부군 병사들은 아군이다.',
+        obj: { t: 'kill', kinds: ['rebel', 'rebel_mg', 'rebel_rpg', 'rebel_sniper'], n: 15 }, poi: 'warzone', reward: { cash: 250, armor: 1, 'mag:rifle': 3 },
+        done: [['yoon', '덕분에 방어선이 버텼다. 놈들 사령관 차무혁이 점령지에서 다음 공세를 준비하고 있다. 머리를 쳐라.']] },
+  r2: { line: 'rebel', title: '내전 ②  사령관 차무혁', giver: 'yoon',
+        desc: '반란군 점령지에 있는 사령관 차무혁을 처치하자. RPG병과 저격수를 조심하라.',
+        obj: { t: 'killTag', tags: ['rebel_boss'] }, poi: 'rebelbase', reward: { cash: 500, 'wpn:bazooka': 1, 'mag:bazooka': 3, adrenaline: 2 },
+        done: [['rebel_boss', '…정부는… 우리를 버렸어… 너도 곧 알게 될 거다…'], ['yoon', '사령관이 쓰러졌다. 남은 놈들은 흩어지겠지. 이건 군에서 주는 감사 표시다.']] },
   // village chains
   v0a: { line: 'v0', title: '솔빛 ①  배고픈 겨울', giver: 'elder0', next: 'v0b', desc: '박 노인에게 식량 8개를 전달하자.', obj: { t: 'deliver', items: { food: 8 }, to: 'elder0' }, reward: { cash: 120, meds: 2 },
          done: [['elder0', '고맙네. 덕분에 아이들이 이번 주는 굶지 않겠어. …그런데 부탁이 하나 더 있네.']] },
@@ -111,7 +121,7 @@ const QUESTS = {
         desc: '네 마을 모두가 당신을 믿는다. 생존자 6명을 기지 동료로 모은 뒤, 아무 마을 대표에게나 말을 걸어 연합을 맺자.',
         obj: { t: 'crew', n: 6 }, ending: 'community' },
 };
-const LINE_START = { main: 'm1', cure: null, evac: null, v0: 'v0a', v1: 'v1a', v2: 'v2a', v3: 'v3a', community: null };
+const LINE_START = { main: 'm1', cure: null, evac: null, rebel: null, v0: 'v0a', v1: 'v1a', v2: 'v2a', v3: 'v3a', community: null };
 const ENDINGS = {
   cure: { title: '새벽의 치료제', scene: 'scene_ending_cure',
           text: '배양기가 마지막으로 울리던 새벽, 한서진 박사의 손에 푸른 빛이 담긴 유리병이 들려 있었다. 치료제는 물린 사람을 되돌리지는 못했지만, 더 이상 아무도 변하지 않게 만들었다. 무전기로 처방이 퍼져 나갔고, 도시 곳곳에서 꺼졌던 불빛이 하나둘 다시 켜졌다.' },
@@ -196,6 +206,7 @@ function completeQuest(id) {
   if (typeof saveGame === 'function') setTimeout(() => saveGame(true), 0);
   const q = QUESTS[id]; if (!q || G.Q.done.includes(id)) return;
   G.Q.done.push(id); delete G.Q.active[id];
+  if (typeof xpAll === 'function') xpAll(q.line === 'main' || q.line === 'cure' || q.line === 'evac' || q.line === 'rebel' ? 120 : 70);
   say(`✔ 임무 완료: ${q.title}`, '#7dff9a', -1, 1); sfxAt('unlock', G.core.x, G.core.y);
   if (q.reward) { for (const k in q.reward) giveItem(k, q.reward[k], -1); say('보상: ' + Object.entries(q.reward).map(([k, v]) => `${itemName(k)} ${v}`).join(', '), '#ffe9a8'); }
   if (q.line.startsWith('v')) G.Q.rep[+q.line[1]]++;
@@ -252,6 +263,10 @@ function questOnDay() {
   // rescued NPCs who died come back to their hideout
   for (const s of W.npcSpawns) if (s.tag && ['dr_han', 'mechanic', 'child'].includes(s.tag) && !tagEnt(s.tag) && !escortDone(s.tag)) {
     const h = spawnHuman(s.kind, s.x, s.y, s); h.mode = 'wait';
+  }
+  if (G.day >= 2 && !G.Q.lines.rebel && !G.Q.done.includes('r1') && !G.Q.done.includes('r2')) {
+    G.Q.lines.rebel = 'r1'; startQuest('r1', true);
+    comm([['yoon', '전 생존자에게 알린다. 정부군 방어선이 반란군의 공세에 무너지고 있다. 격전지로 와서 도와준다면 군 보급품으로 보답하겠다.']]);
   }
   if (SR.chance(0.75)) say(SR.pick(RADIO), '#c8d8a8');
 }
