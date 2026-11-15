@@ -51,9 +51,10 @@ const WEAPONS = {
   // extra guns
   revolver: { key: '2', name: '리볼버',     dmg: 54, rate: 0.34, mag: 6,  reload: 1.8, spread: 0.03, range: 15, noise: 11, price: 210, magPrice: 16 },
   crossbow: { key: '5', name: '석궁',       dmg: 88, rate: 0.95, mag: 5,  reload: 1.7, spread: 0.01, range: 20, pierce: 3, noise: 1.2, price: 380, magPrice: 20, silent: true },
+  bazooka:  { key: '7', name: '바주카',     dmg: 270, rate: 1.6, mag: 1, reload: 3.2, spread: 0.03, range: 24, rocket: true, blast: 4.3, rspeed: 11, noise: 20, price: 1250, magPrice: 95, backblast: true },
   flamer:   { key: '3', name: '화염방사기', dmg: 7,  rate: 0.07, mag: 60, reload: 2.2, spread: 0.2, range: 5.5, auto: true, pierce: 4, noise: 8, price: 680, magPrice: 42, flame: true },
 };
-const WEAPON_ORDER = ['machete', 'knife', 'bat', 'spear', 'axe', 'katana', 'sledge', 'chainsaw', 'pistol', 'revolver', 'smg', 'flamer', 'shotgun', 'rifle', 'crossbow', 'sniper', 'launcher'];
+const WEAPON_ORDER = ['machete', 'knife', 'bat', 'spear', 'axe', 'katana', 'sledge', 'chainsaw', 'pistol', 'revolver', 'smg', 'flamer', 'shotgun', 'rifle', 'crossbow', 'sniper', 'launcher', 'bazooka'];
 const UPG_STATS = {
   dmg:    { name: '피해량',    per: 0.15 },   // ×(1+0.15·lvl)
   mag:    { name: '탄창 용량', per: 0.25 },   // ×(1+0.25·lvl)
@@ -72,8 +73,8 @@ const WSKILLS = {
   cleave: { name: '휩쓸기',     desc: '근접 공격 범위·각도 +50%',         cost: { cash: 140, scrap: 15 }, melee: true },
 };
 const skillCost = (wid, sk) => { const tier = WTIER[wid]; const o = {}; for (const k in WSKILLS[sk].cost) o[k] = Math.round(WSKILLS[sk].cost[k] * (k === 'cash' ? tier : 1)); return o; };
-const skillFits = (wid, sk) => (WEAPONS[wid].melee ? !WSKILLS[sk].gun : !WSKILLS[sk].melee) && !((wid === 'launcher' || wid === 'flamer') && (sk === 'pierce' || sk === 'incend'));
-const WTIER = { machete: 1, knife: 1, bat: 1, spear: 1.1, axe: 1.3, katana: 1.8, sledge: 1.5, chainsaw: 2.2, pistol: 1, revolver: 1.3, smg: 1.4, flamer: 2.4, shotgun: 1.5, rifle: 2, crossbow: 1.9, sniper: 2.2, launcher: 3 };
+const skillFits = (wid, sk) => (WEAPONS[wid].melee ? !WSKILLS[sk].gun : !WSKILLS[sk].melee) && !((wid === 'launcher' || wid === 'bazooka' || wid === 'flamer') && (sk === 'pierce' || sk === 'incend'));
+const WTIER = { machete: 1, knife: 1, bat: 1, spear: 1.1, axe: 1.3, katana: 1.8, sledge: 1.5, chainsaw: 2.2, pistol: 1, revolver: 1.3, smg: 1.4, flamer: 2.4, shotgun: 1.5, rifle: 2, crossbow: 1.9, sniper: 2.2, launcher: 3, bazooka: 3.4 };
 const upgCost = (wid, lvl) => {
   const tier = WTIER[wid];
   return { cash: Math.round(35 * (lvl + 1) * tier), scrap: Math.round(4 * (lvl + 1) * tier) };
@@ -194,7 +195,7 @@ function makeStock(kind, rnd) {
               'mag:pistol': 6, 'mag:smg': 4, 'mag:shotgun': 4, 'mag:rifle': 3 + rnd.i(2), 'mag:sniper': 2, 'mag:launcher': 1 + rnd.i(2) };
   if (kind === 'military') return { 'mag:rifle': 8, 'mag:sniper': 4, 'mag:launcher': 3, grenade: 6, armor: 2, meds: 4, bandage: 6, adrenaline: 3, mine: 4, 'wpn:sniper': 1, 'wpn:launcher': 1, cash: 600 };
   if (kind === 'merchant') { s['wpn:smg'] = 1; s['wpn:shotgun'] = 1; s['wpn:rifle'] = 1; s['wpn:katana'] = 1; s['wpn:chainsaw'] = 1; s['wpn:revolver'] = 1; s['mag:revolver'] = 4; s['mag:flamer'] = 2; s['mag:crossbow'] = 3; }
-  else { s['wpn:sniper'] = 1; s['wpn:launcher'] = 1; s['wpn:rifle'] = 1; s['wpn:axe'] = 1; s['wpn:crossbow'] = 1; s['wpn:flamer'] = 1; s['mag:crossbow'] = 3; s['mag:flamer'] = 2; }
+  else { s['wpn:sniper'] = 1; s['wpn:launcher'] = 1; s['wpn:rifle'] = 1; s['wpn:axe'] = 1; s['wpn:crossbow'] = 1; s['wpn:flamer'] = 1; s['mag:crossbow'] = 3; s['mag:flamer'] = 2; s['wpn:bazooka'] = 1; s['mag:bazooka'] = 2; }
   s.cash = 200 + rnd.i(300); // what you take if you kill them
   return s;
 }
@@ -212,7 +213,7 @@ const CONTAINERS = {
   safe:     { name: '금고',     color: '#3a3a3a', time: 2.5, loot: [['cash', 40, 140, 6], ['grenade', 1, 2, 1], ['mag:sniper', 1, 1, 1], ['gold', 1, 1, 3], ['jewel', 1, 1, 2], ['watch', 1, 1, 2]] },
   ammobox:  { name: '탄약 상자', color: '#4a5a3a', time: 1.4, loot: [['mag:rifle', 1, 2, 3], ['mag:shotgun', 1, 2, 3], ['mag:smg', 1, 2, 3], ['mag:launcher', 1, 1, 1], ['grenade', 1, 2, 2], ['wpn:rifle', 1, 1, 1]] },
   stash:    { name: '마을 창고', color: '#a08050', time: 2.0, loot: [['food', 2, 6, 4], ['meds', 1, 3, 3], ['cash', 20, 80, 3], ['scrap', 4, 10, 3], ['mag:rifle', 1, 2, 2], ['grenade', 1, 2, 1], ['jewel', 1, 1, 1]] },
-  milcrate: { name: '군용 보급상자', color: '#4a5a32', time: 1.8, loot: [['wpn:crossbow', 1, 1, 0.5], ['wpn:flamer', 1, 1, 0.3], ['mag:flamer', 1, 2, 1], ['mag:rifle', 1, 3, 4], ['mag:sniper', 1, 2, 2], ['mag:launcher', 1, 1, 1], ['grenade', 1, 3, 3], ['armor', 1, 1, 1], ['adrenaline', 1, 1, 2], ['mine', 1, 2, 2]] },
+  milcrate: { name: '군용 보급상자', color: '#4a5a32', time: 1.8, loot: [['wpn:crossbow', 1, 1, 0.5], ['wpn:flamer', 1, 1, 0.3], ['wpn:bazooka', 1, 1, 0.15], ['mag:bazooka', 1, 1, 0.5], ['mag:flamer', 1, 2, 1], ['mag:rifle', 1, 3, 4], ['mag:sniper', 1, 2, 2], ['mag:launcher', 1, 1, 1], ['grenade', 1, 3, 3], ['armor', 1, 1, 1], ['adrenaline', 1, 1, 2], ['mine', 1, 2, 2]] },
   labfridge: { name: '연구용 냉장고', color: '#d8e0e8', time: 1.2, loot: [['chem', 1, 3, 5], ['meds', 1, 2, 3], ['adrenaline', 1, 1, 2], ['parts', 1, 2, 2]] },
   altar:    { name: '교단 제단', color: '#6a1010', time: 1.6, loot: [['wpn:katana', 1, 1, 0.7], ['gold', 1, 1, 2], ['jewel', 1, 1, 2], ['watch', 1, 1, 2], ['cash', 30, 90, 3], ['molotov', 1, 3, 3]] },
   pump:     { name: '주유기', color: '#c83a2a', time: 2.2, loot: [['fuel', 1, 3, 1]] },

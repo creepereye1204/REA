@@ -193,6 +193,7 @@ function startQuest(id, silent) {
   qBump();
 }
 function completeQuest(id) {
+  if (typeof saveGame === 'function') setTimeout(() => saveGame(true), 0);
   const q = QUESTS[id]; if (!q || G.Q.done.includes(id)) return;
   G.Q.done.push(id); delete G.Q.active[id];
   say(`✔ 임무 완료: ${q.title}`, '#7dff9a', -1, 1); sfxAt('unlock', G.core.x, G.core.y);

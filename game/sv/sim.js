@@ -435,7 +435,9 @@ function fireGun(sh, wid, a, opt = {}) {
   const spread = w.spread * (opt.spreadMul || 1) * (sh.in && sh.in.crouch ? 0.6 : 1) * (mine && hasSkill(wid, 'tight') ? 0.6 : 1);
   const rangeK = mine && hasSkill(wid, 'range') ? 1.3 : 1, pierceAdd = mine && hasSkill(wid, 'pierce') ? 1 : 0;
   if (w.rocket) {
-    G.shots.push({ k: 'rocket', x: mx, y: my, vx: Math.cos(a) * 16, vy: Math.sin(a) * 16, dmg, team: sh.team, owner: sh, life: 2 });
+    const rs = w.rspeed || 16;
+    G.shots.push({ k: 'rocket', x: mx, y: my, vx: Math.cos(a) * rs, vy: Math.sin(a) * rs, dmg, team: sh.team, owner: sh, life: 2.4, blast: w.blast || 3 });
+    if (w.backblast) { fx({ k: 'smoke', x: +(sh.x - Math.cos(a) * 1.2).toFixed(2), y: +(sh.y - Math.sin(a) * 1.2).toFixed(2) }); if (sh.vx !== undefined) { sh.vx -= Math.cos(a) * 0.12; sh.vy -= Math.sin(a) * 0.12; } }
   } else if (w.flame) {
     const aa = a + (SR.f() - 0.5) * spread * 2;
     hitscan(sh, mx, my, aa, w.range * rangeK, dmg, w.pierce || 1, 3);
@@ -568,7 +570,7 @@ function startReload(p, auto) {
     return;
   }
   p.reloadT = wstat(wid, 'reload'); p.reloadW = wid;
-  sfxAt('reload', p.x, p.y);
+  fx({ k: 'reload', x: +p.x.toFixed(2), y: +p.y.toFixed(2), a: +p.angle.toFixed(2), pid: p.pid, t: +p.reloadT.toFixed(2), w: wid });
 }
 // magazines are real: the fullest spare goes in, the partial one goes back to the pouch
 function finishReload(p) {
@@ -706,7 +708,7 @@ function exitCar(p, force) {
     flowBaseDirty = true;
     p.veh = null; p.r = 0.3; p.x = sp[0]; p.y = sp[1];
     for (const q of G.players) if (q && q.ride === p.pid) leaveSeat(q);
-    fx({ k: 'contmove', id: c.id, cells: c.cells, x: c.x, y: c.y, horiz, fuel: c.fuel });
+    fx({ k: 'contmove', id: c.id, cells: c.cells, x: c.x, y: c.y, horiz, fuel: c.fuel }); sfxAt('door', p.x, p.y);
     fx({ k: 'tp', pid: p.pid, x: p.x, y: p.y });
     return true;
   }
@@ -1428,7 +1430,7 @@ function updateShots() {
         s.x = nx; s.y = ny;
       }
       if (hit || s.life <= 0) {
-        if (s.k === 'rocket') explode(s.x, s.y, s.dmg, 3, s.owner);
+        if (s.k === 'rocket') explode(s.x, s.y, s.dmg, s.blast || 3, s.owner);
         else fx({ k: s.k === 'spit' ? 'splat' : 'boom', x: s.x, y: s.y, r: 0.6, fire: 1 });
         continue;
       }

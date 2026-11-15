@@ -33,7 +33,8 @@ function noiseSrc(dur) {
 const GUN_SYN = {
   pistol: { thump: 140, crack: 2600, len: 0.16, vol: 0.5 }, smg: { thump: 160, crack: 3000, len: 0.1, vol: 0.38 }, rifle: { thump: 110, crack: 2200, len: 0.2, vol: 0.55 },
   shotgun: { thump: 70, crack: 1400, len: 0.32, vol: 0.75 }, sniper: { thump: 60, crack: 1800, len: 0.5, vol: 0.85 }, turret: { thump: 180, crack: 3200, len: 0.08, vol: 0.3 },
-  launcher: { thump: 50, crack: 700, len: 0.4, vol: 0.6 },
+  launcher: { thump: 50, crack: 700, len: 0.4, vol: 0.6 }, bazooka: { thump: 38, crack: 500, len: 0.6, vol: 0.85 }, revolver: { thump: 100, crack: 2000, len: 0.25, vol: 0.65 },
+  crossbow: { thump: 220, crack: 900, len: 0.08, vol: 0.2 }, flamer: { thump: 60, crack: 400, len: 0.09, vol: 0.18 },
 };
 // returns true when it handled the sound
 function richSfx(name, vol) {
@@ -75,7 +76,7 @@ function richSfx(name, vol) {
 function updateAudio(dt) {
   if (!actx || !audioGraph()) return;
   const me = G && meP();
-  if (!me) { const t0 = actx.currentTime; for (const g of [AUD.wind.g, AUD.rain.g, AUD.drone, AUD.eng && AUD.eng.gn]) if (g) g.gain.setTargetAtTime(0, t0, 0.3); return; }
+  if (!me) { const t0 = actx.currentTime; for (const g of [AUD.wind.g, AUD.rain.g, AUD.drone, AUD.eng && AUD.eng.gn, BGM.gain]) if (g) g.gain.setTargetAtTime(0, t0, 0.3); return; }
   const t = actx.currentTime, w = G.weather || { k: 'clear', i: 0 }, night = G.phase === 'night' || G.phase === 'dawn';
   const b = biomeAt(me.x, me.y), open = b !== BIO.CITY;
   const set = (g, v) => g.gain.setTargetAtTime(v, t, 0.6);
@@ -91,6 +92,7 @@ function updateAudio(dt) {
     if (near) richSfx('groan', 1 - nd / 18);
     AUD.nextGroan = t + 1.5 + Math.random() * 4;
   }
+  updateBgm(me);
   // engine hum while driving
   if (me.veh) {
     if (!AUD.eng) { const o = actx.createOscillator(), o2 = actx.createOscillator(), f = actx.createBiquadFilter(), gn = actx.createGain(); o.type = 'sawtooth'; o2.type = 'square'; f.type = 'lowpass'; f.frequency.value = 400; gn.gain.value = 0; o.connect(f); o2.connect(f); f.connect(gn); gn.connect(master); o.start(); o2.start(); AUD.eng = { o, o2, gn, f }; }
@@ -100,4 +102,44 @@ function updateAudio(dt) {
   } else if (AUD.eng) AUD.eng.gn.gain.setTargetAtTime(0, t, 0.2);
   const tense = (me.hp < 30 && !me.down) || (me.useP > 0 && me.useLabel && /뒤지기|훔치기/.test(me.useLabel));
   if (tense && t > AUD.beatT) { richSfx('heart', me.hp < 30 ? 1 : 0.6); AUD.beatT = t + (me.hp < 30 ? 0.75 : 1.0); }
+}
+
+// ── combat music: a looping minor-key ostinato with drums that swells while you fight ──
+const BGM = { gain: null, level: 0, next: 0, step: 0, bpm: 132 };
+const BASS = [55, 55, 65.41, 55, 49, 49, 58.27, 61.74]; // A1 A1 C2 A1 G1 G1 A#1 B1
+function bgmNote(t, f, d, type, vol, filt) {
+  const o = actx.createOscillator(), gn = actx.createGain(); o.type = type; o.frequency.setValueAtTime(f, t);
+  gn.gain.setValueAtTime(0.0001, t); gn.gain.exponentialRampToValueAtTime(vol, t + 0.01); gn.gain.exponentialRampToValueAtTime(0.0001, t + d);
+  if (filt) { const lp = actx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = filt; o.connect(lp); lp.connect(gn); } else o.connect(gn);
+  gn.connect(BGM.gain); o.start(t); o.stop(t + d + 0.05);
+}
+function bgmHit(t, kind) {
+  if (kind === 'kick') { const o = actx.createOscillator(), gn = actx.createGain(); o.frequency.setValueAtTime(140, t); o.frequency.exponentialRampToValueAtTime(40, t + 0.12); gn.gain.setValueAtTime(0.9, t); gn.gain.exponentialRampToValueAtTime(0.0001, t + 0.18); o.connect(gn); gn.connect(BGM.gain); o.start(t); o.stop(t + 0.2); return; }
+  const n = noiseSrc(kind === 'snare' ? 0.18 : 0.05), f = actx.createBiquadFilter(), gn = actx.createGain();
+  f.type = kind === 'snare' ? 'bandpass' : 'highpass'; f.frequency.value = kind === 'snare' ? 1800 : 7000;
+  gn.gain.setValueAtTime(kind === 'snare' ? 0.5 : 0.18, t); gn.gain.exponentialRampToValueAtTime(0.0001, t + (kind === 'snare' ? 0.16 : 0.04));
+  n.connect(f); f.connect(gn); gn.connect(BGM.gain); n.start(t);
+}
+function updateBgm(me) {
+  if (!BGM.gain) { BGM.gain = actx.createGain(); BGM.gain.gain.value = 0; BGM.gain.connect(master); }
+  const t = actx.currentTime;
+  // how hot is it? enemies hunting you nearby, a boss, or a night wave in progress
+  let heat = 0;
+  for (const e of G.ents) { if ((e.cat === 'mob' || e.team === 'bandit' || e.team === 'cult') && (e.target === me || e.wave || (e.alert > 0))) { const d = dist(e.x, e.y, me.x, me.y); if (d < 16) heat += e.def.boss ? 4 : 0.35; } }
+  if (G.phase === 'night' && G.waveIdx > 0) heat += 0.4;
+  const want = Math.min(1, heat / 2.2);
+  BGM.level += (want - BGM.level) * (want > BGM.level ? 0.04 : 0.006);
+  BGM.gain.gain.setTargetAtTime(BGM.level * 0.32, t, 0.3);
+  if (BGM.level < 0.03) { BGM.next = 0; return; }
+  const beat = 60 / BGM.bpm / 2; // eighth notes
+  if (!BGM.next || BGM.next < t) BGM.next = t + 0.05;
+  while (BGM.next < t + 0.25) {
+    const s = BGM.step++ % 32, tt = BGM.next, bar = Math.floor(s / 8) % 4;
+    bgmNote(tt, BASS[s % 8] * (bar === 3 && s % 8 > 5 ? 1.5 : 1), beat * 0.9, 'sawtooth', 0.32, 420 + BGM.level * 900);
+    if (s % 4 === 0) bgmHit(tt, 'kick');
+    if (s % 8 === 4) bgmHit(tt, 'snare');
+    if (BGM.level > 0.4) bgmHit(tt, 'hat');
+    if (BGM.level > 0.6 && s % 8 === 0) for (const f of [220, 261.6, 329.6]) bgmNote(tt, f * (bar === 2 ? 0.89 : 1), beat * 7.5, 'triangle', 0.05, 1600); // tension stab
+    BGM.next += beat;
+  }
 }

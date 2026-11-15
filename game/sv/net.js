@@ -58,8 +58,15 @@ async function hostOpen() {
       conn.on('data', d => hostRecv(d));
       conn.on('close', () => {
         NET.connected = false; NET.conn = null;
-        if (G && G.players[1]) G.players[1].joined = false;
-        say('P2 연결이 끊겼습니다. 같은 코드로 다시 참가할 수 있습니다.', '#ffb36b', -1, 1);
+        const q = G && G.players[1];
+        if (q) { // take the character out of the world so nothing can kill it while its owner is away
+          if (q.veh) exitCar(q, true); if (q.ride !== undefined) leaveSeat(q);
+          q.down = false; q.joined = false; q.ride = undefined;
+          if (q.dead) { q.dead = false; q.hp = 50; }
+          for (const e of G.ents) if (e.target === q) e.target = null;
+        }
+        if (G) saveGame(true);
+        say('P2 연결이 끊겼습니다 — 캐릭터는 안전하게 보관됩니다. 같은 코드로 다시 참가하면 옆에서 다시 시작합니다.', '#ffb36b', -1, 1);
         V.net = `방 코드: ${NET.code} — 친구를 기다리는 중`;
       });
     });

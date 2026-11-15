@@ -276,7 +276,7 @@ function drawUI(g) {
     const b = panelBox(g, 360, host ? 280 : 230, NET.role === 'solo' ? '일시정지' : '메뉴 (게임은 계속 진행됩니다)');
     button(g, b.x + 30, b.y + 60, b.w - 60, 40, '계속하기', () => { V.paused = false; });
     button(g, b.x + 30, b.y + 110, b.w - 60, 40, '도움말', () => { V.help = true; });
-    if (host) button(g, b.x + 30, b.y + 160, b.w - 60, 40, '저장하기', () => { saveGame(); V.paused = false; }, { color: '#7dff9a' });
+    if (host) button(g, b.x + 30, b.y + 160, b.w - 60, 40, V.savedAt ? `자동 저장됨 · ${Math.round((Date.now() - V.savedAt) / 1000)}초 전 (지금 저장)` : '저장하기', () => { saveGame(); V.paused = false; }, { color: '#7dff9a', size: 12 });
     button(g, b.x + 30, b.y + (host ? 210 : 160), b.w - 60, 40, host ? '저장하고 타이틀로' : '타이틀로 나가기', () => { if (host) saveGame(true); quitToTitle(); }, { color: '#ff9a8a' });
   }
   if (V.ending) drawEnding(g);
@@ -674,7 +674,8 @@ function audioUnlock() {
 }
 const SFX = {
   pistol: [900, 0.05, 'square', 0.05], smg: [1000, 0.035, 'square', 0.035], shotgun: [150, 0.14, 'noise', 0.14], rifle: [700, 0.05, 'sawtooth', 0.05],
-  sniper: [300, 0.25, 'noise', 0.18], launcher: [200, 0.25, 'sawtooth', 0.07], machete: [400, 0.05, 'noise', 0.03], turret: [1200, 0.03, 'square', 0.025],
+  sniper: [300, 0.25, 'noise', 0.18], launcher: [200, 0.25, 'sawtooth', 0.07], bazooka: [150, 0.4, 'sawtooth', 0.09], revolver: [800, 0.08, 'square', 0.06], crossbow: [500, 0.05, 'triangle', 0.03], flamer: [120, 0.08, 'noise', 0.04],
+  skid: [1500, 0.18, 'noise', 0.05], crash: [70, 0.4, 'noise', 0.22], magout: [380, 0.05, 'square', 0.04], magin: [900, 0.06, 'square', 0.05], rack: [600, 0.1, 'noise', 0.07], shellin: [1300, 0.035, 'square', 0.03], boltpull: [700, 0.08, 'noise', 0.05], machete: [400, 0.05, 'noise', 0.03], turret: [1200, 0.03, 'square', 0.025],
   boom: [60, 0.5, 'noise', 0.3], kill: [140, 0.08, 'noise', 0.05], hurt: [120, 0.15, 'square', 0.08], bite: [200, 0.06, 'noise', 0.04],
   pickup: [990, 0.12, 'triangle', 0.07], unlock: [660, 0.35, 'triangle', 0.09], reload: [1500, 0.04, 'square', 0.03], empty: [300, 0.03, 'square', 0.04],
   switch: [700, 0.03, 'square', 0.03], throw: [500, 0.06, 'triangle', 0.05], place: [300, 0.07, 'triangle', 0.06], chop: [180, 0.08, 'noise', 0.07],

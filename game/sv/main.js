@@ -24,7 +24,7 @@ function driveMove(p, inp) {
   } else v.spd *= 0.95;
   if (Math.abs(v.spd) < 0.05) v.spd = 0;
   const ok = moveActor(p, Math.cos(v.ang) * v.spd * DT, Math.sin(v.ang) * v.spd * DT);
-  if (!ok) { if (Math.abs(v.spd) > 9) { v.hp -= Math.abs(v.spd) * 1.2; V.shake = Math.max(V.shake, Math.abs(v.spd) * 0.4); sfx('thud', p.x, p.y); } v.spd *= 0.6; }
+  if (!ok) { if (Math.abs(v.spd) > 9) { v.hp -= Math.abs(v.spd) * 1.2; V.shake = Math.max(V.shake, Math.abs(v.spd) * 0.4); sfx('crash', p.x, p.y); } v.spd *= 0.6; }
   p.angle = v.ang; inp.moving = Math.abs(v.spd) > 0.3;
 }
 function step() {
@@ -48,7 +48,7 @@ function step() {
       else if (NET.role !== 'host' || !NET.connected) G.fxOut = [];
     }
     updateGhost(p);
-    if (NET.role !== 'client' && !G.over && G.tick % (FPS * 120) === 0 && G.tick) saveGame(true);
+    if (NET.role !== 'client' && !G.over && G.tick % (FPS * 60) === 0 && G.tick) saveGame(true); // autosave every minute
     if (G.over && !V.savedBest) { V.savedBest = true; try { if (G.over.day > bestDays()) localStorage.setItem('nightfall.best', String(G.over.day)); } catch (e) { /* private mode */ } }
   }
 }

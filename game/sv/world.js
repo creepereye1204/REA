@@ -538,9 +538,20 @@ function genWorld(seed) {
   for (let k = 0, tries = 0; k < 700 && tries < 40000; tries++) {
     const x = 2 + R.i(MW - 4), y = 2 + R.i(MH - 4);
     if (tile[idx(x, y)] !== T.ROAD || res[idx(x, y)]) continue;
-    const hz = get(x - 2, y) === T.ROAD && get(x + 2, y) === T.ROAD && get(x, y - 2) !== T.ROAD;
+    // park in an outer lane, lined up with the road, never inside a junction
+    const R_ = (a, b) => get(a, b) === T.ROAD;
+    const hRoad = R_(x - 3, y) && R_(x + 3, y) && !(R_(x, y - 3) && R_(x, y + 3));
+    const vRoad = R_(x, y - 3) && R_(x, y + 3) && !(R_(x - 3, y) && R_(x + 3, y));
+    if (hRoad === vRoad) continue;
+    const hz = hRoad;
+    const edge = hz ? (!R_(x, y - 1) || !R_(x, y + 1)) : (!R_(x - 1, y) || !R_(x + 1, y));
+    if (!edge) continue;
+    let junction = false;
+    for (let k = -3; k <= 4 && !junction; k++) { if (hz ? (R_(x + k, y - 3) || R_(x + k, y + 3)) : (R_(x - 3, y + k) || R_(x + 3, y + k))) junction = true; }
+    if (junction) continue;
     const x2 = hz ? x + 1 : x, y2 = hz ? y : y + 1;
     if (get(x2, y2) !== T.ROAD || W.contAt[idx(x2, y2)] || W.contAt[idx(x, y)]) continue;
+    if ([[-2, 0], [2, 0], [0, -2], [0, 2]].some(([a, b]) => inMap(x + a, y + b) && W.contAt[idx(x + a, y + b)])) continue; // no bumper-to-bumper piles
     if (dist(x, y, cx, cy) < 20) continue;
     const c = addCont('car', x, y, -1, [idx(x, y), idx(x2, y2)]);
     if (c) { c.x = (x + x2) / 2 + 0.5; c.y = (y + y2) / 2 + 0.5; c.horiz = hz; c.color = R.pick(['#7a2f2f', '#2f4a7a', '#4a6a3a', '#8a8a8a', '#d0c080', '#3a3a3a', '#e8e8e8']); k++; }

@@ -128,7 +128,7 @@ function loadGroundArt(map) {
     const im = new Image();
     im.onload = () => {
       const c = texCanvas(); c.getContext('2d').drawImage(im, 0, 0, TEX_N, TEX_N); TEX[tkey] = c;
-      if (--left === 0) { TEX_ART = true; V.chunks.clear(); }
+      if (--left === 0) { TEX_ART = true; V.chunks.clear(); roofCache.clear(); }
     };
     im.onerror = () => { left--; };
     im.src = 'assets/' + file + '?v=' + ART_V;
@@ -144,6 +144,20 @@ function loadSprites(m) {
   im.src = 'assets/' + m.file + '?v=' + ART_V;
 }
 const sprOk = key => SPR.img && SPR.map[key];
+// the sprite's silhouette in one colour (for shadows), cached
+const sprTintC = {};
+function sprSilhouette(key, col) {
+  const id = key + col; if (sprTintC[id]) return sprTintC[id];
+  const r = SPR.map[key], c = document.createElement('canvas'); c.width = r[2]; c.height = r[3];
+  const g = c.getContext('2d'); g.drawImage(SPR.img, r[0], r[1], r[2], r[3], 0, 0, r[2], r[3]);
+  g.globalCompositeOperation = 'source-in'; g.fillStyle = col; g.fillRect(0, 0, r[2], r[3]);
+  return (sprTintC[id] = c);
+}
+// sun direction for cast shadows (px offset), follows the time of day
+function sunOffset(len) {
+  const c = G ? G.clock : 720; if (c < DAWN || c > DUSK) return [len * 0.25, len * 0.35];
+  const t = (c - DAWN) / (DUSK - DAWN); return [(t - 0.5) * 2 * len * 0.9, len * (0.45 + Math.abs(t - 0.5) * 0.5)];
+}
 // draw sprite `key` centred at (x, y) with the given width (height keeps the aspect), optional rotation
 function drawSprite(g, key, x, y, w, rot, alpha) {
   const r = SPR.map[key]; if (!r || !SPR.img) return false;
