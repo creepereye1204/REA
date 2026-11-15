@@ -1,4 +1,5 @@
 """Pack art set v3: top-down character sprites into assets/chr.webp and add them to art.json."""
+import numpy as np
 import os, sys, json
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'v2'))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -43,7 +44,10 @@ imgs = {}
 for k in CHARS:
     f = os.path.join(OUT, 'chr_' + k + '.png')
     if k in SKIP or not os.path.exists(f): continue
-    try: im = cutout(Image.open(f)); bb = im.getbbox()
+    try:
+        im = cutout(Image.open(f)); a_ = np.array(im)[..., 3]
+        a_[a_ < 200] = 0  # crop to the solid figure, not faint background remnants
+        bb = Image.fromarray(a_).getbbox()
     except OSError: continue  # still being written
     if not bb: continue
     im = im.crop(bb); side = 160 if k in BIG else 112

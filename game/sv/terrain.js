@@ -266,7 +266,11 @@ function drawChar(g, key, x, y, ang, size, o = {}) {
     g.globalAlpha = 1; o = { ...o, alpha: (o.alpha === undefined ? 1 : o.alpha) * 0.78, scale: (o.scale || 1) * 0.9 };
   }
   const k = size / Math.max(r[2], r[3]), w = r[2] * k * (o.scale || 1) * (1 + bob * 0.035), h = r[3] * k * (o.scale || 1) * (1 - bob * 0.02);
-  g.fillStyle = 'rgba(0,0,0,.32)'; g.beginPath(); g.ellipse(px + 3, py + 11, w * 0.42, w * 0.22, 0, 0, TAU); g.fill();
+  { // the figure's own silhouette, cast a few px along the sun
+    const [sx2, sy2] = sunOffset(4);
+    g.save(); g.translate(px + sx2, py + sy2 + 2); g.rotate(ang + Math.PI / 2 + (r[4] === 2 ? Math.PI : 0) + (o.down ? 1.4 : 0)); g.globalAlpha = 0.3 * (o.alpha === undefined ? 1 : o.alpha);
+    g.drawImage(chrTint(key, '#000000'), -w / 2, -h / 2, w, h); g.restore();
+  }
   g.save();
   if (r[4] === 1 && !o.down) { // upright 3/4 sprite: stand it up, mirror toward the facing side, lean with the stride
     const flip = Math.cos(ang) < -0.15 ? -1 : 1;

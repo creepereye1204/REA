@@ -73,6 +73,8 @@ const PERKS_LV = {
   endure: { name: '지구력',   desc: '기력 소모 -15%, 허기 -10%' },
 };
 const PERK_MAX = 5;
+// distance in px from a top-down character's centre to its gun's muzzle (matches drawGun)
+const MUZZLE = { pistol: 20, revolver: 21, smg: 24, shotgun: 32, rifle: 31, sniper: 38, launcher: 34, bazooka: 36, crossbow: 26, flamer: 28 };
 const xpNeed = lvl => 60 + lvl * 40;
 // weapon skills: one-time unlocks per weapon at the workbench
 const WSKILLS = {

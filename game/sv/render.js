@@ -9,7 +9,7 @@ const V = {
 };
 
 // ── generated art (item icons, portraits, illustrations) ──────────────────
-const ART_V = 7; // bump when assets/ change so browsers refetch
+const ART_V = 9; // bump when assets/ change so browsers refetch
 const ART = { items: null, im: {}, por: null, pm: {}, scenes: {}, sceneSrc: {} };
 function loadArt() {
   if (typeof fetch !== 'function' || typeof Image === 'undefined') return;
@@ -423,7 +423,7 @@ function draw(dtReal) {
   // particles / tracers / floaters
   for (const t of V.tracers) {
     g.globalAlpha = 1 - t.t / t.life; g.strokeStyle = t.c === 2 ? '#bfe6ff' : t.c === 3 ? '#ff9a40' : '#ffe9a0'; g.lineWidth = t.c === 2 ? 3 : t.c === 3 ? 2.2 : 1.6;
-    g.beginPath(); g.moveTo(t.x1 * TILE, t.y1 * TILE - 14); g.lineTo(t.x2 * TILE, t.y2 * TILE - 14); g.stroke();
+    const oy = CHR.img ? 8 : 14; g.beginPath(); g.moveTo(t.x1 * TILE, t.y1 * TILE - oy); g.lineTo(t.x2 * TILE, t.y2 * TILE - oy); g.stroke();
   }
   g.globalAlpha = 1;
   for (const p of V.parts) drawPart(g, p);
@@ -438,7 +438,7 @@ function draw(dtReal) {
   g.textAlign = 'center';
   for (const e of viewEnts) drawEntLabel(g, e);
   for (const p of G.players) if (p && p.joined && !p.dead) {
-    g.font = 'bold 11px system-ui, sans-serif'; g.fillStyle = p.color; g.fillText(p.name, p.x * TILE, p.y * TILE - 46);
+    g.font = 'bold 11px system-ui, sans-serif'; g.fillStyle = p.color; g.fillText(p.name, p.x * TILE, p.y * TILE - (CHR.img ? 36 : 46));
     if (p.down) { g.fillStyle = '#ff6b5c'; g.fillText(`쓰러짐 ${Math.ceil(p.downT)}s`, p.x * TILE, p.y * TILE - 58); }
   }
   for (const n of V.dmgNums) {
@@ -1029,9 +1029,8 @@ function drawPlayer(g, p) {
     drawChar(g, pk, bx, by, p.angle + twist, 48, { walk: p.walk * 0.8, flash: p.flash > 0, down: p.down });
     if (!p.down) {
       if (ms) drawMeleeWeapon(g, p.wpn, bx * TILE + Math.cos(p.angle + ms.off) * 9, by * TILE - 8 + Math.sin(p.angle + ms.off) * 9, p.angle + ms.off, ms);
-      else { const a = p.angle + twist, hx = bx * TILE + Math.cos(a) * 8, hy = by * TILE - 8 + Math.sin(a) * 8;
-        g.strokeStyle = 'rgba(0,0,0,.6)'; g.lineWidth = gl[2] + 2; g.lineCap = 'butt'; g.beginPath(); g.moveTo(hx, hy); g.lineTo(hx + Math.cos(a) * gl[0], hy + Math.sin(a) * gl[0]); g.stroke();
-        g.strokeStyle = gl[1]; g.lineWidth = gl[2]; g.beginPath(); g.moveTo(hx, hy); g.lineTo(hx + Math.cos(a) * gl[0], hy + Math.sin(a) * gl[0]); g.stroke(); }
+      else { const a = p.angle + twist, kick = Math.max(0, p.fireT || 0) > 0 && WEAPONS[p.wpn].rate ? Math.min(1, p.fireT / WEAPONS[p.wpn].rate) * 3 : 0;
+        drawGun(g, p.wpn, bx * TILE - Math.cos(a) * kick, by * TILE - 8 - Math.sin(a) * kick, a); }
     }
     if (p.in && p.in.crouch && !p.down) { g.fillStyle = 'rgba(160,200,255,.7)'; g.font = '10px system-ui'; g.textAlign = 'center'; g.fillText('은신', p.x * TILE, p.y * TILE + 22); }
     return;
@@ -1051,6 +1050,27 @@ function drawPlayer(g, p) {
     if (!behind) drawMeleeWeapon(g, p.wpn, hx, hy, a, ms || { ext: 0, k: 0, trail: 0 });
   } else drawBody(g, bx, by, p.angle + twist, { r: 0.34, body: p.color, head: '#f0c9a0', hat: '#2a2a2a', walk: p.walk, flash: p.flash > 0, gun: true, gunLen: gl[0], gunCol: gl[1], gunW: gl[2], legs: '#2a2a3a', down: p.down });
   if (p.in && p.in.crouch && !p.down) { g.fillStyle = 'rgba(160,200,255,.7)'; g.font = '10px system-ui'; g.textAlign = 'center'; g.fillText('은신', p.x * TILE, p.y * TILE + 16); }
+}
+// ── guns seen from above, held in front of the body (muzzle distances match MUZZLE) ──
+function drawGun(g, wid, x, y, a) {
+  g.save(); g.translate(x, y); g.rotate(a);
+  const ol = 'rgba(12,10,8,.85)';
+  const R = (x0, y0, w, h, c, r = 1) => { g.fillStyle = ol; roundRect(g, x0 - 1, y0 - 1, w + 2, h + 2, r + 1); g.fill(); g.fillStyle = c; roundRect(g, x0, y0, w, h, r); g.fill(); };
+  const hand = (hx, hy) => { g.fillStyle = ol; g.beginPath(); g.arc(hx, hy, 3.4, 0, TAU); g.fill(); g.fillStyle = '#e0b890'; g.beginPath(); g.arc(hx, hy, 2.5, 0, TAU); g.fill(); };
+  switch (wid) {
+    case 'pistol': R(9, -2, 11, 4, '#2a2c30'); R(10, -1.2, 9, 1.4, '#4a4e54', 0); hand(10, 0); break;
+    case 'revolver': R(9, -2, 12, 4, '#3a3c40'); g.fillStyle = ol; g.beginPath(); g.arc(13, 0, 3.6, 0, TAU); g.fill(); g.fillStyle = '#6a6e74'; g.beginPath(); g.arc(13, 0, 2.6, 0, TAU); g.fill(); hand(10, 0); break;
+    case 'smg': R(4, -3, 15, 6, '#2a2c2e', 2); R(18, -1.2, 6, 2.4, '#1a1a1a', 0); R(10, 3, 3, 5, '#3a3a3a', 0); R(7, -1, 7, 2, '#4a4e54', 0); hand(6, 2); hand(14, -2); break;
+    case 'rifle': R(-4, -2.5, 8, 5, '#1e1e20', 2); R(4, -3, 16, 6, '#2a2e26', 2); R(19, -1.2, 12, 2.4, '#151515', 0); R(10, 3, 4, 6, '#2a2a2a', 0); R(8, -1.4, 4, 2.8, '#c84030', 0); hand(6, 2); hand(17, -2); break;
+    case 'shotgun': R(-5, -2.5, 10, 5, '#6a4426', 2); R(5, -2.5, 10, 5, '#2a2a2c', 1); R(14, -1.6, 18, 3.2, '#1c1c1e', 0); R(17, -3, 7, 6, '#7a5030', 2); hand(5, 2); hand(20, 0); break;
+    case 'sniper': R(-7, -2.5, 10, 5, '#3a3020', 2); R(3, -2.5, 14, 5, '#2a3020', 1); R(16, -1, 22, 2, '#151515', 0); R(5, -2.2, 12, 4.4, '#101214', 2); g.fillStyle = '#5ac8ff'; g.fillRect(16, -1.5, 1.5, 3); hand(4, 2); hand(14, -2); break;
+    case 'launcher': R(-10, -4, 44, 8, '#4a5a3a', 3); R(30, -5, 5, 10, '#2a3220', 1); R(-10, -5, 4, 10, '#2a3220', 1); R(6, -6.5, 5, 3, '#2a2a2a', 0); hand(4, 4); hand(14, 4); break;
+    case 'bazooka': R(-12, -5, 48, 10, '#556b3a', 4); R(32, -6, 5, 12, '#2e3820', 1); R(-12, -6, 5, 12, '#2e3820', 1); R(8, -8, 6, 4, '#2a2a2a', 0); g.fillStyle = 'rgba(255,255,255,.15)'; g.fillRect(-8, -4, 38, 2); hand(4, 5); hand(16, 5); break;
+    case 'crossbow': R(2, -2, 20, 4, '#6a4426', 1); g.strokeStyle = ol; g.lineWidth = 3.5; g.beginPath(); g.arc(17, 0, 11, -1.15, 1.15); g.stroke(); g.strokeStyle = '#3a3a3e'; g.lineWidth = 2; g.stroke(); g.strokeStyle = '#ddd'; g.lineWidth = 0.8; g.beginPath(); g.moveTo(21.5, -10); g.lineTo(9, 0); g.lineTo(21.5, 10); g.stroke(); R(9, -0.6, 17, 1.2, '#c8c8c8', 0); hand(6, 0); break;
+    case 'flamer': g.fillStyle = ol; g.beginPath(); g.arc(-6, 0, 6.5, 0, TAU); g.fill(); g.fillStyle = '#a03020'; g.beginPath(); g.arc(-6, 0, 5.5, 0, TAU); g.fill(); R(2, -3, 16, 6, '#3a3a3c', 2); R(17, -1.6, 11, 3.2, '#5a5a5e', 0); g.fillStyle = '#ff8a30'; g.beginPath(); g.arc(28, 0, 1.6, 0, TAU); g.fill(); hand(6, 2); hand(14, -2); break;
+    default: R(9, -2, 11, 4, '#2a2c30'); hand(10, 0);
+  }
+  g.restore();
 }
 // ── melee animation ─────────────────────────────────────────────────────────
 // sweep: slash across the arc; thrust: stab straight out; buzz: chainsaw held out, shaking
@@ -1150,7 +1170,7 @@ function drawEntLabel(g, e) {
 function drawPart(g, p) {
   const k = p.t / p.life, x = p.x * TILE, y = p.y * TILE;
   switch (p.k) {
-    case 'flash': { const r = p.big ? 13 : 8, fx2 = x + Math.cos(p.a) * 10, fy2 = y - 14 + Math.sin(p.a) * 6;
+    case 'flash': { const r = p.big ? 13 : 8, fx2 = x + Math.cos(p.a) * 3, fy2 = y - (CHR.img ? 8 : 14) + Math.sin(p.a) * 3;
       g.fillStyle = 'rgba(255,200,90,.55)'; g.beginPath(); g.arc(fx2, fy2, r * 1.6, 0, TAU); g.fill();
       g.fillStyle = '#fff6b0'; g.beginPath(); g.moveTo(fx2 + Math.cos(p.a) * r * 2.2, fy2 + Math.sin(p.a) * r * 2.2); g.lineTo(fx2 + Math.cos(p.a + 1.6) * r * 0.7, fy2 + Math.sin(p.a + 1.6) * r * 0.7); g.lineTo(fx2 + Math.cos(p.a - 1.6) * r * 0.7, fy2 + Math.sin(p.a - 1.6) * r * 0.7); g.fill();
       g.fillStyle = '#fff'; g.beginPath(); g.arc(fx2, fy2, r * 0.5, 0, TAU); g.fill(); break; }

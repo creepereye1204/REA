@@ -414,7 +414,7 @@ function gameOver(reason) {
 }
 
 // hitscan: walls stop it, player-side bullets pass over own structures, others hit them
-function hitscan(sh, x, y, a, range, dmg, pierce = 1, color) {
+function hitscan(sh, x, y, a, range, dmg, pierce = 1, color, vis) {
   const dx = Math.cos(a), dy = Math.sin(a);
   let structHit = null;
   const wallD = rayCells(x, y, dx, dy, range, (i, t) => {
@@ -440,12 +440,14 @@ function hitscan(sh, x, y, a, range, dmg, pierce = 1, color) {
   }
   if (structHit && hits.length < pierce) damageStruct(structHit, dmg, sh);
   else if (!hits.length && end < range && SR.chance(0.4)) fx({ k: 'spark', x: x + dx * end, y: y + dy * end });
-  fx({ k: 'tr', x1: +x.toFixed(2), y1: +y.toFixed(2), x2: +(x + dx * end).toFixed(2), y2: +(y + dy * end).toFixed(2), c: color || 0 });
+  const vx = vis && end > vis ? x + dx * vis : x, vy = vis && end > vis ? y + dy * vis : y;
+  fx({ k: 'tr', x1: +vx.toFixed(2), y1: +vy.toFixed(2), x2: +(x + dx * end).toFixed(2), y2: +(y + dy * end).toFixed(2), c: color || 0 });
 }
 
 function fireGun(sh, wid, a, opt = {}) {
   const w = WEAPONS[wid];
   const mx = sh.x + Math.cos(a) * 0.45, my = sh.y + Math.sin(a) * 0.45;
+  const vis = (sh.cat === 'player' ? (MUZZLE[wid] || 20) : 18) / TILE - 0.45; // tracer starts at the drawn muzzle
   const dmg = (sh.cat === 'player' ? wstat(wid, 'dmg') * (1 + 0.08 * perk(sh, 'aim')) : w.dmg) * (opt.dmgMul || 1);
   const mine = sh.cat === 'player';
   const spread = w.spread * (opt.spreadMul || 1) * (sh.in && sh.in.crouch ? 0.6 : 1) * (mine && hasSkill(wid, 'tight') ? 0.6 : 1) * (mine ? 1 - 0.08 * perk(sh, 'aim') : 1);
@@ -463,10 +465,10 @@ function fireGun(sh, wid, a, opt = {}) {
     const n = w.pellets || 1;
     for (let k = 0; k < n; k++) {
       const aa = a + (SR.f() + SR.f() - 1) * spread;
-      hitscan(sh, mx, my, aa, w.range * rangeK * (n > 1 ? SR.r(0.75, 1) : 1), dmg, (w.pierce || 1) + pierceAdd, wid === 'sniper' ? 2 : mine && hasSkill(wid, 'incend') ? 3 : 0);
+      hitscan(sh, mx, my, aa, w.range * rangeK * (n > 1 ? SR.r(0.75, 1) : 1), dmg, (w.pierce || 1) + pierceAdd, wid === 'sniper' ? 2 : mine && hasSkill(wid, 'incend') ? 3 : 0, vis);
     }
   }
-  fx({ k: 'flash', x: +mx.toFixed(2), y: +my.toFixed(2), a: +a.toFixed(2), pid: sh.cat === 'player' ? sh.pid : -1, w: wid });
+  fx({ k: 'flash', x: +(mx + Math.cos(a) * vis).toFixed(2), y: +(my + Math.sin(a) * vis).toFixed(2), a: +a.toFixed(2), pid: sh.cat === 'player' ? sh.pid : -1, w: wid });
   sfxAt(wid, sh.x, sh.y);
   makeNoise(sh.x, sh.y, w.noise * (sh.in && sh.in.crouch ? 0.7 : 1), sh);
 }
