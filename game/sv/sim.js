@@ -228,6 +228,7 @@ function rollLoot(kind) {
   const rolls = 1 + SR.i(kind === 'safe' || kind === 'stash' ? 3 : 2) + (kind === 'car' ? 1 : 0);
   const tot = tbl.reduce((s, e) => s + e[3], 0);
   for (let r = 0; r < rolls; r++) {
+    if (!SR.chance(0.8)) continue; // loot trimmed to 80% so supplies stay scarce
     let q = SR.f() * tot;
     for (const [id, a, b, w] of tbl) { if ((q -= w) <= 0) { const n = a + SR.i(b - a + 1); if (n) out[id] = (out[id] || 0) + n; break; } }
   }
@@ -290,7 +291,7 @@ function kill(e, src) {
       G.kills++;
       const c = e.def.cash[0] + SR.i(e.def.cash[1] - e.def.cash[0] + 1);
       if (c) { G.stash.cash += c; fx({ k: 'float', x: e.x, y: e.y - 0.4, text: '$' + c, c: '#ffd166' }); }
-      if (SR.chance(e.def.boss ? 1 : 0.04)) dropBag(e.x - 0.3, e.y, e.def.boss ? { cash: 150, 'mag:launcher': 2, grenade: 3, meds: 2, gold: 1, chem: 2 } : rollLoot(SR.pick(['cabinet', 'crate', 'desk'])), e.def.boss ? e.def.name : '');
+      if (SR.chance(e.def.boss ? 1 : 0.032)) dropBag(e.x - 0.3, e.y, e.def.boss ? { cash: 150, 'mag:launcher': 2, grenade: 3, meds: 2, gold: 1, chem: 2 } : rollLoot(SR.pick(['cabinet', 'crate', 'desk'])), e.def.boss ? e.def.name : '');
     }
     if (e.def.explode) explode(e.x, e.y, e.def.explode.dmg, e.def.explode.r, e);
     if (e.def.gas) addHazard('gas', e.x, e.y, e.def.gas.r, e.def.gas.t, e.def.gas.dps, 'zombie');
@@ -791,7 +792,7 @@ function completeInteract(p, it) {
       const g = GATHER[W.tile[it.i]]; if (!g) break;
       W.tile[it.i] = g.to; G.tileDiff[it.i] = g.to; updateCellMB(it.i); flowBaseDirty = true;
       fx({ k: 'tile', i: it.i, v: g.to });
-      for (const [id, a, b, ch] of g.give) if (SR.chance(ch)) giveItem(id, a + SR.i(b - a + 1), p.pid, it.x, it.y);
+      for (const [id, a, b, ch] of g.give) if (SR.chance(ch * 0.8)) giveItem(id, a + SR.i(b - a + 1), p.pid, it.x, it.y);
       sfxAt(g.sfx, it.x, it.y); makeNoise(it.x, it.y, g.noise, p);
       p.useKey = null;
       break;
