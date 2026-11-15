@@ -245,6 +245,12 @@ function drawChar(g, key, x, y, ang, size, o = {}) {
   const r = CHR.map[key]; if (!r || !CHR.img) return false;
   const px = x * TILE, py = y * TILE - 8;
   const bob = Math.sin(o.walk || 0), lunge = (o.atk || 0) * 6;
+  const cx = Math.floor(x), cy = Math.floor(y), swim = inMap(cx, cy) && W.tile[idx(cx, cy)] === T.WATER;
+  if (swim) {
+    g.strokeStyle = 'rgba(220,240,255,.5)'; g.lineWidth = 1.5;
+    for (let k = 0; k < 2; k++) { const rr = size * (0.42 + ((V.frame / 40 + k * 0.5) % 1) * 0.35); g.globalAlpha = 1 - ((V.frame / 40 + k * 0.5) % 1); g.beginPath(); g.ellipse(px, py + 4, rr, rr * 0.6, 0, 0, TAU); g.stroke(); }
+    g.globalAlpha = 1; o = { ...o, alpha: (o.alpha === undefined ? 1 : o.alpha) * 0.78, scale: (o.scale || 1) * 0.9 };
+  }
   const k = size / Math.max(r[2], r[3]), w = r[2] * k * (o.scale || 1) * (1 + bob * 0.035), h = r[3] * k * (o.scale || 1) * (1 - bob * 0.02);
   g.fillStyle = 'rgba(0,0,0,.32)'; g.beginPath(); g.ellipse(px + 3, py + 11, w * 0.42, w * 0.22, 0, 0, TAU); g.fill();
   g.save();

@@ -27,6 +27,14 @@ const imgOk = i => i && i.complete && i.naturalWidth > 0;
 function drawIcon(g, key, x, y, s) {
   const r = ART.im[key];
   if (r && imgOk(ART.items)) { g.drawImage(ART.items, r[0], r[1], r[2], r[2], x - s / 2, y - s / 2, s, s); return true; }
+  const wk = key.startsWith('wpn_') || key.startsWith('mag_') ? key.slice(4) : null;
+  if (wk && GUN_LOOK[wk]) { // drawn silhouette for weapons without a painted icon
+    const [len, col, wd] = GUN_LOOK[wk], k = s / 34;
+    g.save(); g.translate(x, y); g.rotate(-0.6); g.lineCap = 'round';
+    if (key.startsWith('mag_')) { g.fillStyle = '#2a2a2a'; g.fillRect(-4 * k, -8 * k, 8 * k, 16 * k); g.fillStyle = '#c8a040'; g.fillRect(-3 * k, -9 * k, 6 * k, 3 * k); }
+    else { g.strokeStyle = 'rgba(0,0,0,.8)'; g.lineWidth = (wd + 3) * k; g.beginPath(); g.moveTo(-len * 0.55 * k, 0); g.lineTo(len * 0.55 * k, 0); g.stroke(); g.strokeStyle = col; g.lineWidth = wd * k; g.stroke(); g.fillStyle = '#4a3020'; g.fillRect(-len * 0.55 * k - 2, -2 * k, 7 * k, 4 * k); }
+    g.restore(); return false;
+  }
   g.fillStyle = '#8a6a40'; g.beginPath(); g.arc(x, y, s * 0.32, 0, TAU); g.fill();
   return false;
 }
@@ -280,6 +288,7 @@ function applyFx(o) {
     case 'debris': for (let k = 0; k < 10; k++) V.parts.push({ k: 'chunk', x: o.x, y: o.y, z: 0.5, vx: rnd(-3, 3), vy: rnd(-3, 3), vz: rnd(2, 5), c: o.c, t: 0, life: 0.8 }); break;
     case 'swing': V.parts.push({ k: 'swing', x: o.x, y: o.y, a: o.a, t: 0, life: 0.15 }); break;
     case 'scream': V.parts.push({ k: 'ring', x: o.x, y: o.y, t: 0, life: 0.8 }); break;
+    case 'flame': for (let k = 0; k < 3; k++) { const a = o.a + rnd(-0.22, 0.22), sp = rnd(5, 9); V.parts.push({ k: 'fire', x: o.x, y: o.y, vx0: Math.cos(a) * sp, vy0: Math.sin(a) * sp, t: 0, life: rnd(0.35, 0.6), s: rnd(4, 8) }); } V.lights.push({ x: o.x, y: o.y, r: 3, t: 0.08, c: '255,140,40' }); break;
     case 'tele': V.parts.push({ k: 'tele', x: o.x, y: o.y, a: o.a, len: o.len, w: o.w, t: 0, life: o.t }); break;
     case 'alarmping': V.parts.push({ k: 'ring', x: o.x, y: o.y, t: 0, life: 0.8 }); break;
     case 'float': V.floaters.push({ x: o.x, y: o.y, text: o.text, c: o.c, icon: o.icon, t: 0, life: o.icon ? 1.8 : 1.4 }); break;
@@ -291,6 +300,7 @@ function applyFx(o) {
     case 'contmove': { const c = W.conts[o.id]; if (c) { for (const k of c.cells) if (W.contAt[k] === c) { W.contAt[k] = null; updateCellMB(k); } Object.assign(c, { cells: o.cells, x: o.x, y: o.y, horiz: o.horiz, fuel: o.fuel, gone: false, looted: true }); for (const k of c.cells) { W.contAt[k] = c; updateCellMB(k); } } break; }
     case 'tp': if (o.pid === V.me) V.camInit = false; break;
     case 'over': sfx('over'); break;
+    case 'died': if (o.pid === V.me) { sfx('over'); V.shake = 10; } break;
     case 'comm': if (o.pid === -1 || o.pid === undefined || o.pid === V.me) { for (const l of o.lines) V.comm.push(l); if (V.comm.length === o.lines.length) V.commT = 0; sfx('beep'); } break;
     case 'boss': V.boss = { por: o.por, name: o.name, t: 4.5 }; break;
     case 'ending': V.ending = { key: o.e, t: 0 }; break;
@@ -400,7 +410,7 @@ function draw(dtReal) {
   }
   // particles / tracers / floaters
   for (const t of V.tracers) {
-    g.globalAlpha = 1 - t.t / t.life; g.strokeStyle = t.c === 2 ? '#bfe6ff' : '#ffe9a0'; g.lineWidth = t.c === 2 ? 3 : 1.6;
+    g.globalAlpha = 1 - t.t / t.life; g.strokeStyle = t.c === 2 ? '#bfe6ff' : t.c === 3 ? '#ff9a40' : '#ffe9a0'; g.lineWidth = t.c === 2 ? 3 : t.c === 3 ? 2.2 : 1.6;
     g.beginPath(); g.moveTo(t.x1 * TILE, t.y1 * TILE - 14); g.lineTo(t.x2 * TILE, t.y2 * TILE - 14); g.stroke();
   }
   g.globalAlpha = 1;
@@ -762,6 +772,17 @@ function drawStruct(g, s) {
       g.fillStyle = '#444'; g.fillRect(x - 2, y - 30, 4, 34);
       g.fillStyle = '#ffe9a0'; g.beginPath(); g.arc(x, y - 32, 5, 0, TAU); g.fill();
       break;
+    case 'farm': {
+      const gr = s.grow || 0, px = x - 15, py = y - 15;
+      g.fillStyle = '#4a3624'; g.fillRect(px, py, 30, 30); g.fillStyle = '#3a2a1a'; for (let k = 0; k < 4; k++) g.fillRect(px + 2, py + 3 + k * 7, 26, 3);
+      if (gr > 0.05) for (let k = 0; k < 4; k++) for (let j = 0; j < 3; j++) {
+        const cx = px + 5 + j * 10, cy = py + 5 + k * 7, h = 2 + gr * 7;
+        g.fillStyle = gr >= 1 ? '#d8b040' : gr > 0.6 ? '#5a9a3a' : '#6ab04a'; g.fillRect(cx - 1, cy - h + 3, 2, h);
+        if (gr > 0.5) { g.fillRect(cx - 3, cy - h + 4, 2, 2); g.fillRect(cx + 1, cy - h + 3, 2, 2); }
+      }
+      if (gr >= 1 && (V.frame >> 4) & 1) { g.fillStyle = '#ffd166'; g.beginPath(); g.arc(x, y - 22, 3, 0, TAU); g.fill(); }
+      break;
+    }
     case 'campfire': {
       g.fillStyle = 'rgba(0,0,0,.3)'; g.beginPath(); g.ellipse(x, y + 4, 15, 6, 0, 0, TAU); g.fill();
       g.fillStyle = '#6a6460'; for (let k = 0; k < 8; k++) { const a = k / 8 * TAU; g.beginPath(); g.arc(x + Math.cos(a) * 11, y + Math.sin(a) * 5, 3.5, 0, TAU); g.fill(); }
@@ -855,7 +876,9 @@ function drawBody(g, x, y, face, o) {
   }
 }
 function roundRect(g, x, y, w, h, r) { g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); }
-const GUN_LOOK = { pistol: [10, '#222', 4], smg: [15, '#2a2a2a', 5], shotgun: [20, '#4a3020', 5], rifle: [22, '#2a3020', 5], sniper: [28, '#203020', 4], launcher: [24, '#3a4a3a', 8], machete: [16, '#ccc', 3] };
+const GUN_LOOK = { pistol: [10, '#222', 4], smg: [15, '#2a2a2a', 5], shotgun: [20, '#4a3020', 5], rifle: [22, '#2a3020', 5], sniper: [28, '#203020', 4], launcher: [24, '#3a4a3a', 8], machete: [16, '#ccc', 3],
+  knife: [10, '#ddd', 2], bat: [20, '#b08850', 4], spear: [30, '#a08a5a', 2], axe: [20, '#c84030', 5], katana: [26, '#e8eef4', 2], sledge: [22, '#606268', 7], chainsaw: [22, '#e0a020', 7],
+  revolver: [12, '#4a4a50', 4], crossbow: [18, '#6a4a2a', 5], flamer: [22, '#a03020', 6] };
 function drawEnt(g, e) {
   const x = e.rx !== undefined ? e.rx : e.x, y = e.ry !== undefined ? e.ry : e.y;
   const ck = charKey(e.kind, e.id);
@@ -1005,6 +1028,7 @@ function drawPart(g, p) {
       g.globalAlpha = (1 - k) * 0.6; g.drawImage(chrTint(p.key, '#900000'), -w / 2, -h / 2, w, h); g.restore(); g.globalAlpha = 1; break;
     }
     case 'impact': { const r = 6 + k * 14; g.strokeStyle = p.c ? `rgba(255,220,80,${1 - k})` : `rgba(255,255,255,${0.9 * (1 - k)})`; g.lineWidth = 2.5; g.beginPath(); for (let i = 0; i < 4; i++) { const a = i * Math.PI / 2 + 0.78; g.moveTo(x + Math.cos(a) * r * 0.4, y - 16 + Math.sin(a) * r * 0.4); g.lineTo(x + Math.cos(a) * r, y - 16 + Math.sin(a) * r); } g.stroke(); break; }
+    case 'fire': { const fx3 = x + p.vx0 * p.t * TILE, fy3 = y - 12 + p.vy0 * p.t * TILE; g.fillStyle = `rgba(255,${200 - k * 150 | 0},40,${0.85 * (1 - k)})`; g.beginPath(); g.arc(fx3, fy3, p.s * (0.6 + k * 1.4), 0, TAU); g.fill(); break; }
     case 'tele': { // attack warning lane, filling up until the hit lands
       g.save(); g.translate(x, y - 6); g.rotate(p.a);
       const L = p.len * TILE, Wd = p.w * TILE;

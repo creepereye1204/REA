@@ -8,7 +8,7 @@ const STRUCT_TYPES = ['core', 'bench', 'radio', 'gate', ...STRUCT_ORDER];
 const SHOT_KINDS = ['grenade', 'rocket', 'spit', 'fireball', 'molotov'];
 const TAGS = ['', 'elder0', 'elder1', 'elder2', 'elder3', 'yoon', 'dr_han', 'priest', 'mechanic', 'child', 'broodmother', 'x13', 'goliath', 'camp0', 'camp1', 'camp2', 'camp3'];
 const tagTitle = t => t.startsWith('camp') ? CAMP_BOSSES[+t[4]] : t === 'mechanic' ? '정비공 백도윤' : t === 'child' ? '박민호' : null;
-const MODES = ['idle', 'wait', 'follow', 'guard', 'raid'];
+const MODES = ['idle', 'wait', 'follow', 'guard', 'raid', 'farm'];
 const PERK_LIST = Object.keys(PERKS);
 
 function loadPeerJS() {
@@ -88,7 +88,7 @@ function encodeSnap(forPid) {
            e.tag ? TAGS.indexOf(e.tag) : 0, e.team === 'player' && e.kind !== 'survivor' ? 1 : e.team === 'military' && e.kind === 'lost' ? 2 : e.team === 'village' && e.kind === 'lost' ? 3 : 0);
   }
   const S = [];
-  for (const s of G.structs) S.push(s.id, STRUCT_TYPES.indexOf(s.type), s.cells[0], Math.round(s.hp), r2(s.angle), s.ammo | 0, s.fuse >= 0 ? 1 : 0);
+  for (const s of G.structs) S.push(s.id, STRUCT_TYPES.indexOf(s.type), s.cells[0], Math.round(s.hp), r2(s.angle), s.ammo | 0, s.fuse >= 0 ? 1 : 0, Math.round((s.grow || 0) * 100));
   const shops = {};
   for (const e of G.ents) if (e.def.shop) shops[e.id] = e.stock;
   const sendQ = NET.qv !== G.Q.v || G.tick % 150 === 0; NET.qv = G.Q.v;
@@ -98,7 +98,7 @@ function encodeSnap(forPid) {
     st: G.stash, sh: shops,
     P: G.players.map(p => p && { j: p.joined, x: r2(p.x) / 100, y: r2(p.y) / 100, a: r2(p.angle) / 100, hp: p.hp, hu: p.hunger, sta: p.stamina, w: p.wpn, m: p.mag,
                                  rl: p.reloadT, dn: p.down, dd: p.dead, dt: p.downT, up: p.useP, ul: p.useLabel, f: p.flash, ft: p.fireT, cr: p.in.crouch, mv: p.in.moving,
-                                 ar: p.armor | 0, ad: p.adrT > 0 ? 1 : 0, rd: p.ride === undefined ? null : p.ride, vh: p.veh ? [p.veh.color, r2(p.veh.ang), r2(p.veh.spd), p.veh.fuel | 0, p.veh.hp | 0] : 0 }),
+                                 ar: p.armor | 0, ad: p.adrT > 0 ? 1 : 0, rs: p.respawnT || 0, rd: p.ride === undefined ? null : p.ride, vh: p.veh ? [p.veh.color, r2(p.veh.ang), r2(p.veh.spd), p.veh.fuel | 0, p.veh.hp | 0] : 0 }),
     E, S,
     D: G.drops.map(b => [b.id, r2(b.x), r2(b.y), b.from, dropTop(b)]),
     X: G.shots.map(s => [SHOT_KINDS.indexOf(s.k), r2(s.x), r2(s.y), r2(s.z || 0)]),
@@ -161,7 +161,7 @@ function clientSnap(s) {
     if (!q) return;
     const p = G.players[pid] || (G.players[pid] = makePlayer(pid));
     p.joined = q.j; p.hp = q.hp; p.hunger = q.hu; p.stamina = q.sta; p.wpn = q.w; p.mag = q.m; p.reloadT = q.rl; p.down = q.dn; p.dead = q.dd; p.downT = q.dt;
-    p.useP = q.up; p.useLabel = q.ul; p.flash = q.f; p.fireT = q.ft; p.armor = q.ar; p.adrT = q.ad ? 1 : 0;
+    p.respawnT = q.rs; p.useP = q.up; p.useLabel = q.ul; p.flash = q.f; p.fireT = q.ft; p.armor = q.ar; p.adrT = q.ad ? 1 : 0;
     p.ride = q.rd === null ? undefined : q.rd;
     if (q.vh) {
       if (!p.veh) { p.veh = { id: -1, color: q.vh[0], ang: q.vh[1] / 100, spd: 0, fuel: q.vh[3], hp: q.vh[4] }; p.r = 0.48; }
@@ -201,7 +201,7 @@ function clientSnap(s) {
   G.ents = list;
   // structures → also the collision grid
   const S = s.S, keepS = new Set(), slist = [];
-  for (let k = 0; k < S.length; k += 7) {
+  for (let k = 0; k < S.length; k += 8) {
     const id = S[k], type = STRUCT_TYPES[S[k + 1]], c0 = S[k + 2];
     let st = NET.structMap.get(id);
     if (!st) {
@@ -213,7 +213,7 @@ function clientSnap(s) {
       for (const c of cells) { W.structAt[c] = st; updateCellMB(c); }
     }
     if (S[k + 3] < st.hp) st.flash = 3;
-    st.hp = S[k + 3]; st.angle = S[k + 4] / 100; st.ammo = S[k + 5]; st.fuse = S[k + 6] ? 0 : -1;
+    st.hp = S[k + 3]; st.angle = S[k + 4] / 100; st.ammo = S[k + 5]; st.fuse = S[k + 6] ? 0 : -1; st.grow = S[k + 7] / 100;
     keepS.add(id); slist.push(st);
     if (type === 'core') G.core = st; else if (type === 'bench') G.bench = st; else if (type === 'radio') G.radio = st;
   }

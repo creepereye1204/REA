@@ -10,11 +10,11 @@ const T = { GRASS: 0, DIRT: 1, ROAD: 2, WALK: 3, FLOOR: 4, WALL: 5, TREE: 6, WAT
             STUMP: 9, ROCK: 10, FENCE: 11, DOOR: 12, SAND: 13, VFLOOR: 14, TENT: 15, CAMPDIRT: 16, CROP: 17, PAD: 18, GRAVE: 19,
             MUD: 20, ASH: 21, DEADTREE: 22, PADDY: 23, BUSH: 24, GRAVEL: 25, RUBBLE: 26, RUIN: 27 };
 const TILE_SOLID = new Uint8Array(32), TILE_OPAQUE = new Uint8Array(32);
-for (const t of [T.WALL, T.TREE, T.WATER, T.ROCK, T.FENCE, T.TENT, T.GRAVE, T.DEADTREE, T.RUIN]) TILE_SOLID[t] = 1;
+for (const t of [T.WALL, T.TREE, T.ROCK, T.FENCE, T.TENT, T.GRAVE, T.DEADTREE, T.RUIN]) TILE_SOLID[t] = 1; // water is swimmable (slow)
 for (const t of [T.WALL, T.TREE, T.ROCK, T.TENT, T.BUSH, T.RUIN]) TILE_OPAQUE[t] = 1; // bushes hide you but can be walked through
 // ground that slows you down
 const TILE_SLOW = new Float32Array(32).fill(1);
-TILE_SLOW[T.MUD] = 0.7; TILE_SLOW[T.PADDY] = 0.65; TILE_SLOW[T.BUSH] = 0.75; TILE_SLOW[T.SAND] = 0.9; TILE_SLOW[T.RUBBLE] = 0.85;
+TILE_SLOW[T.WATER] = 0.5; TILE_SLOW[T.MUD] = 0.7; TILE_SLOW[T.PADDY] = 0.65; TILE_SLOW[T.BUSH] = 0.75; TILE_SLOW[T.SAND] = 0.9; TILE_SLOW[T.RUBBLE] = 0.85;
 
 // ── Biomes (Minecraft-style: chosen from elevation / moisture / heat noise) ─────
 const BIO = { PLAINS: 0, FOREST: 1, SWAMP: 2, WASTE: 3, FARM: 4, MOUNTAIN: 5, BEACH: 6, OCEAN: 7, CITY: 8 };
@@ -40,8 +40,20 @@ const WEAPONS = {
   rifle:    { key: '5', name: '돌격소총',   dmg: 30, rate: 0.1,  mag: 30, reload: 1.9, spread: 0.05, range: 18, auto: true, noise: 14, price: 480, magPrice: 38 },
   sniper:   { key: '6', name: '저격소총',   dmg: 150, rate: 1.1, mag: 5, reload: 2.4, spread: 0.004, range: 30, pierce: 4, noise: 18, price: 560, magPrice: 42 },
   launcher: { key: '7', name: '로켓발사기', dmg: 190, rate: 1.0, mag: 3, reload: 2.6, spread: 0.02, range: 22, rocket: true, noise: 16, price: 850, magPrice: 85 },
+  // melee arsenal (all on key 1, pressing it again cycles)
+  knife:    { key: '1', name: '군용 단검',  melee: true, dmg: 30, rate: 0.22, range: 1.15, arc: 1.4, noise: 1,   price: 60,  backstab: 3 },
+  bat:      { key: '1', name: '야구방망이', melee: true, dmg: 38, rate: 0.5,  range: 1.45, arc: 2.1, noise: 2,   price: 50,  knock: 2.2 },
+  spear:    { key: '1', name: '죽창',       melee: true, dmg: 44, rate: 0.48, range: 2.3,  arc: 0.7, noise: 1.5, price: 70 },
+  axe:      { key: '1', name: '소방 도끼',  melee: true, dmg: 66, rate: 0.72, range: 1.5,  arc: 1.7, noise: 2.5, price: 120, knock: 1.4 },
+  katana:   { key: '1', name: '카타나',     melee: true, dmg: 58, rate: 0.33, range: 1.75, arc: 2.3, noise: 1.5, price: 320 },
+  sledge:   { key: '1', name: '오함마',     melee: true, dmg: 100, rate: 1.05, range: 1.6, arc: 1.9, noise: 4,   price: 200, knock: 3.5, structMul: 3 },
+  chainsaw: { key: '1', name: '전기톱',     melee: true, dmg: 15, rate: 0.07, range: 1.45, arc: 1.3, noise: 11, price: 520, auto: true },
+  // extra guns
+  revolver: { key: '2', name: '리볼버',     dmg: 54, rate: 0.34, mag: 6,  reload: 1.8, spread: 0.03, range: 15, noise: 11, price: 210, magPrice: 16 },
+  crossbow: { key: '5', name: '석궁',       dmg: 88, rate: 0.95, mag: 5,  reload: 1.7, spread: 0.01, range: 20, pierce: 3, noise: 1.2, price: 380, magPrice: 20, silent: true },
+  flamer:   { key: '3', name: '화염방사기', dmg: 7,  rate: 0.07, mag: 60, reload: 2.2, spread: 0.2, range: 5.5, auto: true, pierce: 4, noise: 8, price: 680, magPrice: 42, flame: true },
 };
-const WEAPON_ORDER = ['machete', 'pistol', 'smg', 'shotgun', 'rifle', 'sniper', 'launcher'];
+const WEAPON_ORDER = ['machete', 'knife', 'bat', 'spear', 'axe', 'katana', 'sledge', 'chainsaw', 'pistol', 'revolver', 'smg', 'flamer', 'shotgun', 'rifle', 'crossbow', 'sniper', 'launcher'];
 const UPG_STATS = {
   dmg:    { name: '피해량',    per: 0.15 },   // ×(1+0.15·lvl)
   mag:    { name: '탄창 용량', per: 0.25 },   // ×(1+0.25·lvl)
@@ -49,8 +61,21 @@ const UPG_STATS = {
   reload: { name: '재장전',    per: 0.12 },   // time ×(1−0.12·lvl)
 };
 const UPG_MAX = 5;
+// weapon skills: one-time unlocks per weapon at the workbench
+const WSKILLS = {
+  pierce: { name: '관통탄',     desc: '총알이 적을 1명 더 관통',         cost: { cash: 160, parts: 2 },  gun: true },
+  incend: { name: '소이탄',     desc: '명중 시 20% 확률로 불이 붙음',     cost: { cash: 200, chem: 3 },   gun: true },
+  crit:   { name: '정밀 사격',  desc: '치명타 확률 +15%',                cost: { cash: 150, parts: 1 } },
+  tight:  { name: '집탄 개선',  desc: '탄 퍼짐 -40%',                    cost: { cash: 120, scrap: 15 }, gun: true },
+  range:  { name: '장거리 총열', desc: '사거리 +30%',                     cost: { cash: 130, scrap: 20 }, gun: true },
+  vamp:   { name: '흡혈',       desc: '근접 명중마다 체력 +4',            cost: { cash: 140, meds: 2 },   melee: true },
+  cleave: { name: '휩쓸기',     desc: '근접 공격 범위·각도 +50%',         cost: { cash: 140, scrap: 15 }, melee: true },
+};
+const skillCost = (wid, sk) => { const tier = WTIER[wid]; const o = {}; for (const k in WSKILLS[sk].cost) o[k] = Math.round(WSKILLS[sk].cost[k] * (k === 'cash' ? tier : 1)); return o; };
+const skillFits = (wid, sk) => (WEAPONS[wid].melee ? !WSKILLS[sk].gun : !WSKILLS[sk].melee) && !((wid === 'launcher' || wid === 'flamer') && (sk === 'pierce' || sk === 'incend'));
+const WTIER = { machete: 1, knife: 1, bat: 1, spear: 1.1, axe: 1.3, katana: 1.8, sledge: 1.5, chainsaw: 2.2, pistol: 1, revolver: 1.3, smg: 1.4, flamer: 2.4, shotgun: 1.5, rifle: 2, crossbow: 1.9, sniper: 2.2, launcher: 3 };
 const upgCost = (wid, lvl) => {
-  const tier = { machete: 1, pistol: 1, smg: 1.4, shotgun: 1.5, rifle: 2, sniper: 2.2, launcher: 3 }[wid];
+  const tier = WTIER[wid];
   return { cash: Math.round(35 * (lvl + 1) * tier), scrap: Math.round(4 * (lvl + 1) * tier) };
 };
 
@@ -126,8 +151,10 @@ const STRUCTS = {
   barrel:     { name: '폭발 드럼', hp: 1,    cost: { scrap: 5 },               block: true, key: '7' },
   mine:       { name: '지뢰',      hp: 1,    cost: { mine: 1 },                block: false, key: '8' },
   campfire:   { name: '모닥불 거점', hp: 200, cost: { wood: 12, scrap: 2 }, block: false, key: '9', outpost: true },
+  farm:       { name: '밭',         hp: 80,  cost: { wood: 6, food: 1 },  block: false, key: '0' },
 };
-const STRUCT_ORDER = ['wall_wood', 'wall_metal', 'door', 'spikes', 'turret', 'light', 'barrel', 'mine', 'campfire'];
+const STRUCT_ORDER = ['wall_wood', 'wall_metal', 'door', 'spikes', 'turret', 'light', 'barrel', 'mine', 'campfire', 'farm'];
+const FARM_HOURS = 8; // game hours for a plot to ripen (twice as fast when a farmer tends it)
 const OUTPOST_RADIUS = 7; // you can build around any campfire, anywhere in the world
 const BUILD_RADIUS = 18; // tiles from the core
 
@@ -166,8 +193,8 @@ function makeStock(kind, rnd) {
               bandage: 3 + rnd.i(4), molotov: 1 + rnd.i(3), chem: 2 + rnd.i(3), parts: 1 + rnd.i(3), fuel: 2 + rnd.i(3), armor: rnd.i(2), adrenaline: rnd.i(3),
               'mag:pistol': 6, 'mag:smg': 4, 'mag:shotgun': 4, 'mag:rifle': 3 + rnd.i(2), 'mag:sniper': 2, 'mag:launcher': 1 + rnd.i(2) };
   if (kind === 'military') return { 'mag:rifle': 8, 'mag:sniper': 4, 'mag:launcher': 3, grenade: 6, armor: 2, meds: 4, bandage: 6, adrenaline: 3, mine: 4, 'wpn:sniper': 1, 'wpn:launcher': 1, cash: 600 };
-  if (kind === 'merchant') { s['wpn:smg'] = 1; s['wpn:shotgun'] = 1; s['wpn:rifle'] = 1; }
-  else { s['wpn:sniper'] = 1; s['wpn:launcher'] = 1; s['wpn:rifle'] = 1; }
+  if (kind === 'merchant') { s['wpn:smg'] = 1; s['wpn:shotgun'] = 1; s['wpn:rifle'] = 1; s['wpn:katana'] = 1; s['wpn:chainsaw'] = 1; s['wpn:revolver'] = 1; s['mag:revolver'] = 4; s['mag:flamer'] = 2; s['mag:crossbow'] = 3; }
+  else { s['wpn:sniper'] = 1; s['wpn:launcher'] = 1; s['wpn:rifle'] = 1; s['wpn:axe'] = 1; s['wpn:crossbow'] = 1; s['wpn:flamer'] = 1; s['mag:crossbow'] = 3; s['mag:flamer'] = 2; }
   s.cash = 200 + rnd.i(300); // what you take if you kill them
   return s;
 }
@@ -178,21 +205,21 @@ const CONTAINERS = {
   cabinet:  { name: '서랍장',   color: '#7a5a3a', time: 1.0, loot: [['cash', 5, 25, 4], ['food', 1, 2, 3], ['meds', 1, 1, 1], ['scrap', 1, 3, 2], ['mag:pistol', 1, 1, 2], ['bandage', 1, 2, 2], ['watch', 1, 1, 1], ['jewel', 1, 1, 1]] },
   fridge:   { name: '냉장고',   color: '#c8ccd0', time: 0.8, loot: [['food', 1, 4, 8], ['meds', 1, 1, 1]] },
   shelf:    { name: '선반',     color: '#8a6a4a', time: 1.0, loot: [['wood', 2, 5, 3], ['scrap', 2, 5, 3], ['food', 1, 2, 2], ['mag:smg', 1, 1, 1]] },
-  locker:   { name: '무기 보관함', color: '#4a5a6a', time: 1.6, loot: [['mag:pistol', 1, 2, 3], ['mag:smg', 1, 2, 2], ['mag:shotgun', 1, 2, 2], ['mag:rifle', 1, 1, 2], ['grenade', 1, 2, 2], ['wpn:smg', 1, 1, 1], ['wpn:shotgun', 1, 1, 1]] },
+  locker:   { name: '무기 보관함', color: '#4a5a6a', time: 1.6, loot: [['mag:pistol', 1, 2, 3], ['mag:smg', 1, 2, 2], ['mag:shotgun', 1, 2, 2], ['mag:rifle', 1, 1, 2], ['grenade', 1, 2, 2], ['wpn:smg', 1, 1, 1], ['wpn:shotgun', 1, 1, 1], ['wpn:knife', 1, 1, 1], ['wpn:bat', 1, 1, 1], ['wpn:revolver', 1, 1, 0.6], ['mag:revolver', 1, 2, 1]] },
   medcab:   { name: '약품함',   color: '#e8e8e8', time: 1.0, loot: [['meds', 1, 3, 6], ['bandage', 1, 3, 5], ['chem', 1, 2, 2], ['adrenaline', 1, 1, 1]] },
-  crate:    { name: '나무 상자', color: '#9a7a4a', time: 1.2, loot: [['wood', 4, 10, 4], ['scrap', 3, 8, 4], ['mine', 1, 1, 1], ['chem', 1, 1, 1], ['molotov', 1, 2, 1]] },
+  crate:    { name: '나무 상자', color: '#9a7a4a', time: 1.2, loot: [['wpn:spear', 1, 1, 0.5], ['wpn:bat', 1, 1, 0.4], ['wood', 4, 10, 4], ['scrap', 3, 8, 4], ['mine', 1, 1, 1], ['chem', 1, 1, 1], ['molotov', 1, 2, 1]] },
   car:      { name: '차량',     color: '#5a6a8a', time: 1.8, loot: [['scrap', 3, 9, 6], ['cash', 0, 20, 2], ['food', 1, 1, 1], ['grenade', 1, 1, 1], ['fuel', 1, 2, 3], ['parts', 1, 1, 2]] },
   safe:     { name: '금고',     color: '#3a3a3a', time: 2.5, loot: [['cash', 40, 140, 6], ['grenade', 1, 2, 1], ['mag:sniper', 1, 1, 1], ['gold', 1, 1, 3], ['jewel', 1, 1, 2], ['watch', 1, 1, 2]] },
   ammobox:  { name: '탄약 상자', color: '#4a5a3a', time: 1.4, loot: [['mag:rifle', 1, 2, 3], ['mag:shotgun', 1, 2, 3], ['mag:smg', 1, 2, 3], ['mag:launcher', 1, 1, 1], ['grenade', 1, 2, 2], ['wpn:rifle', 1, 1, 1]] },
   stash:    { name: '마을 창고', color: '#a08050', time: 2.0, loot: [['food', 2, 6, 4], ['meds', 1, 3, 3], ['cash', 20, 80, 3], ['scrap', 4, 10, 3], ['mag:rifle', 1, 2, 2], ['grenade', 1, 2, 1], ['jewel', 1, 1, 1]] },
-  milcrate: { name: '군용 보급상자', color: '#4a5a32', time: 1.8, loot: [['mag:rifle', 1, 3, 4], ['mag:sniper', 1, 2, 2], ['mag:launcher', 1, 1, 1], ['grenade', 1, 3, 3], ['armor', 1, 1, 1], ['adrenaline', 1, 1, 2], ['mine', 1, 2, 2]] },
+  milcrate: { name: '군용 보급상자', color: '#4a5a32', time: 1.8, loot: [['wpn:crossbow', 1, 1, 0.5], ['wpn:flamer', 1, 1, 0.3], ['mag:flamer', 1, 2, 1], ['mag:rifle', 1, 3, 4], ['mag:sniper', 1, 2, 2], ['mag:launcher', 1, 1, 1], ['grenade', 1, 3, 3], ['armor', 1, 1, 1], ['adrenaline', 1, 1, 2], ['mine', 1, 2, 2]] },
   labfridge: { name: '연구용 냉장고', color: '#d8e0e8', time: 1.2, loot: [['chem', 1, 3, 5], ['meds', 1, 2, 3], ['adrenaline', 1, 1, 2], ['parts', 1, 2, 2]] },
-  altar:    { name: '교단 제단', color: '#6a1010', time: 1.6, loot: [['gold', 1, 1, 2], ['jewel', 1, 1, 2], ['watch', 1, 1, 2], ['cash', 30, 90, 3], ['molotov', 1, 3, 3]] },
+  altar:    { name: '교단 제단', color: '#6a1010', time: 1.6, loot: [['wpn:katana', 1, 1, 0.7], ['gold', 1, 1, 2], ['jewel', 1, 1, 2], ['watch', 1, 1, 2], ['cash', 30, 90, 3], ['molotov', 1, 3, 3]] },
   pump:     { name: '주유기', color: '#c83a2a', time: 2.2, loot: [['fuel', 1, 3, 1]] },
   barn:     { name: '헛간 곳간', color: '#8a4a2a', time: 1.4, loot: [['food', 2, 6, 6], ['wood', 3, 8, 3], ['fuel', 1, 1, 1]] },
   desk:     { name: '책상', color: '#6a5040', time: 0.9, loot: [['parts', 1, 2, 3], ['cash', 3, 15, 3], ['watch', 1, 1, 1], ['bandage', 1, 2, 2]] },
   airdrop:  { name: '보급품 상자', color: '#4a6a8a', time: 2.6, loot: [['wpn:rifle', 1, 1, 2], ['wpn:sniper', 1, 1, 1], ['wpn:launcher', 1, 1, 1], ['mag:rifle', 2, 4, 5], ['mag:sniper', 1, 3, 3], ['mag:launcher', 1, 2, 2], ['armor', 1, 1, 4], ['adrenaline', 1, 2, 3], ['meds', 2, 4, 4], ['grenade', 2, 4, 4], ['fuel', 1, 3, 2], ['food', 3, 6, 3]] },
-  toolbox:  { name: '공구함', color: '#b84a2a', time: 1.2, loot: [['parts', 1, 3, 4], ['scrap', 3, 8, 4], ['fuel', 1, 1, 1]] },
+  toolbox:  { name: '공구함', color: '#b84a2a', time: 1.2, loot: [['parts', 1, 3, 4], ['scrap', 3, 8, 4], ['fuel', 1, 1, 1], ['wpn:axe', 1, 1, 1], ['wpn:sledge', 1, 1, 1], ['wpn:chainsaw', 1, 1, 0.3]] },
 };
 
 const BUILDING_TYPES = {

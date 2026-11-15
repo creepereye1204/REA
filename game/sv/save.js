@@ -16,7 +16,7 @@ function saveGame(quiet) {
     const data = {
       v: 2, t: Date.now(), seed: G.seed, G: g,
       ents: everyone().filter(e => !e.dead && !(e.cat === 'mob' && !e.home && !e.tag)).map(ent),
-      structs: G.structs.map(s => ({ id: s.id, type: s.type, cells: s.cells, hp: s.hp, ammo: s.ammo, angle: s.angle })),
+      structs: G.structs.map(s => ({ id: s.id, type: s.type, cells: s.cells, hp: s.hp, ammo: s.ammo, angle: s.angle, grow: s.grow })),
       extra: W.conts.slice(W.nConts0).map(c => ({ kind: c.kind, x: Math.floor(c.x), y: Math.floor(c.y) })),
       looted: W.conts.filter(c => c.looted).map(c => c.id),
       cars: W.conts.filter(c => c.kind === 'car' && (c.gone || c.fuel !== undefined)).map(c => ({ id: c.id, cells: c.cells, x: c.x, y: c.y, horiz: c.horiz, fuel: c.fuel, hp: c.hp, gone: !!c.gone })),
@@ -47,7 +47,7 @@ function loadGame() {
   const defs = STRUCT_DEFS();
   for (const s0 of d.structs) {
     const s = addStruct(s0.type, s0.cells, defs[s0.type] || STRUCTS[s0.type]);
-    s.id = s0.id; s.hp = s0.hp; s.ammo = s0.ammo; s.angle = s0.angle;
+    s.id = s0.id; s.hp = s0.hp; s.ammo = s0.ammo; s.angle = s0.angle; if (s0.grow !== undefined) s.grow = s0.grow;
     if (s.type === 'core') G.core = s; else if (s.type === 'bench') G.bench = s; else if (s.type === 'radio') G.radio = s;
   }
   for (const o of d.ents) {

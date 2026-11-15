@@ -105,14 +105,14 @@ function drawHud(g) {
 
   // hotbar
   const owned = WEAPON_ORDER.filter(w => S.owned[w]);
-  const hw = small ? 54 : 74, hh2 = small ? 40 : 44;
+  const hw = Math.min(small ? 54 : 74, (VIEW_W - 20) / Math.max(1, owned.length) - 4), hh2 = small ? 40 : 44;
   const hx0 = T_ ? (VIEW_W - owned.length * (hw + 4)) / 2 : (VIEW_W - owned.length * (hw + 4)) / 2;
   const hy = T_ ? 86 : VIEW_H - hh2 - 10;
   owned.forEach((w, k) => {
     const x = hx0 + k * (hw + 4), sel = p.wpn === w, D = WEAPONS[w];
     g.fillStyle = sel ? 'rgba(255,209,102,.92)' : 'rgba(0,0,0,.55)'; roundRect(g, x, hy, hw, hh2, 6); g.fill();
     const col = sel ? '#111' : '#ddd';
-    txt(g, `${D.key} ${small ? D.name.slice(0, 3) : D.name}`, x + 5, hy + 15, col, 10);
+    txt(g, `${D.key} ${hw < 60 ? D.name.slice(0, 3) : D.name}`, x + 4, hy + 15, col, hw < 60 ? 9 : 10);
     if (!D.melee) {
       const spare = (S.mags[w] || []);
       txt(g, `${p.mag[w] || 0}/${wstatC(w, 'mag')}`, x + 5, hy + 31, col, 11);
@@ -280,6 +280,14 @@ function drawUI(g) {
     button(g, b.x + 30, b.y + (host ? 210 : 160), b.w - 60, 40, host ? '저장하고 타이틀로' : '타이틀로 나가기', () => { if (host) saveGame(true); quitToTitle(); }, { color: '#ff9a8a' });
   }
   if (V.ending) drawEnding(g);
+  const meD = meP();
+  if (meD && meD.dead && !G.over) {
+    g.fillStyle = 'rgba(60,0,0,.55)'; g.fillRect(0, 0, VIEW_W, VIEW_H);
+    txt(g, '사망했습니다', VIEW_W / 2, VIEW_H * 0.38, '#ff6b5c', VIEW_W < 700 ? 30 : 42, 'center');
+    txt(g, `${G.day}일차 · 처치 ${G.kills} · 떨어뜨린 유품은 지도에 ✖ 로 표시됩니다`, VIEW_W / 2, VIEW_H * 0.38 + 34, '#ddd', 13, 'center', false);
+    const t = Math.max(0, meD.respawnT || 0);
+    button(g, VIEW_W / 2 - 110, VIEW_H * 0.38 + 60, 220, 46, t > 4 ? `부활 대기 ${t.toFixed(0)}초` : `다시하기 (${t.toFixed(0)})`, () => sendCmd({ c: 'respawn' }), { disabled: t > 4, size: 15, color: '#7dff9a' });
+  }
   if (G.over) {
     const b = panelBox(g, 420, 230, G.over.reason === 'core' ? '기지가 무너졌습니다' : '모두 쓰러졌습니다');
     txt(g, `${G.over.day}일차까지 생존 · 처치 ${G.over.kills}`, VIEW_W / 2, b.y + 90, '#eee', 16, 'center');
@@ -350,9 +358,10 @@ function drawBench(g) {
   const S = G.stash;
   const b = panelBox(g, 860, 520, '작업대');
   const tab = V.panel.tab || 0;
-  ['무기 강화', '제작'].forEach((t, k) => button(g, b.x + 100 + k * 110, b.y + 10, 100, 30, t, () => { V.panel.tab = k; }, { color: tab === k ? '#ffd166' : null, size: 12 }));
+  ['무기 강화', '무기 스킬', '제작'].forEach((t, k) => button(g, b.x + 100 + k * 110, b.y + 10, 100, 30, t, () => { V.panel.tab = k; }, { color: tab === k ? '#ffd166' : null, size: 12 }));
   txt(g, `$${S.cash}  ·  고철 ${S.scrap}`, b.x + b.w - 56, b.y + 28, '#ffd166', 13, 'right');
-  if (tab === 1) return drawCraft(g, b);
+  if (tab === 2) return drawCraft(g, b);
+  if (tab === 1) return drawSkills(g, b);
   const owned = WEAPON_ORDER.filter(w => S.owned[w]);
   const rh = Math.min(62, (b.h - 60) / Math.max(owned.length, 1));
   const stats = Object.keys(UPG_STATS), nameW = b.w > 700 ? 150 : 90, sw = (b.w - 32 - nameW) / stats.length;
@@ -371,6 +380,22 @@ function drawBench(g) {
       if (lvl >= UPG_MAX) { txt(g, 'MAX', x, y + 46, '#ffd166', 11); return; }
       const cost = upgCost(w, lvl);
       button(g, x, y + 30, sw - 8, rh - 38, `$${cost.cash} 고철${cost.scrap}`, () => sendCmd({ c: 'upg', w, s }), { disabled: !canAfford(cost), size: 10 });
+    });
+  });
+}
+function drawSkills(g, b) {
+  const S = G.stash, owned = WEAPON_ORDER.filter(w => S.owned[w]);
+  const rh = Math.min(66, (b.h - 60) / Math.max(owned.length, 1));
+  owned.forEach((w, r) => {
+    const y = b.y + 50 + r * rh, list = Object.keys(WSKILLS).filter(s => skillFits(w, s));
+    g.fillStyle = 'rgba(255,255,255,.04)'; g.fillRect(b.x + 12, y, b.w - 24, rh - 6);
+    txt(g, WEAPONS[w].name, b.x + 20, y + 24, '#fff', 13);
+    const cw = (b.w - 150) / Math.max(5, list.length);
+    list.forEach((s, k) => {
+      const x = b.x + 130 + k * cw, have = S.skills && S.skills[w] && S.skills[w][s], cost = skillCost(w, s);
+      const label = have ? `✔ ${WSKILLS[s].name}` : `${WSKILLS[s].name}`;
+      button(g, x, y + 4, cw - 8, rh - 32, label, () => { if (!have) sendCmd({ c: 'skill', w, s }); }, { disabled: !have && !canAfford(cost), color: have ? '#7dff9a' : null, size: 11 });
+      txt(g, have ? WSKILLS[s].desc : Object.entries(cost).map(([k2, v]) => (k2 === 'cash' ? '$' : ITEMS[k2].name) + v).join(' '), x + 2, y + rh - 14, have ? '#9fe6a0' : '#aaa', 9, 'left', false);
     });
   });
 }
@@ -471,8 +496,10 @@ function bindInput() {
     if (e.code === 'KeyJ') { V.panel = V.panel && V.panel.k === 'journal' ? null : { k: 'journal', tab: 0 }; return; }
     if (anyModal()) { if (e.code === 'KeyE' && V.panel) V.panel = null; return; }
     const digit = e.code.startsWith('Digit') ? +e.code.slice(5) : -1;
-    if (V.build && digit >= 1 && digit <= STRUCT_ORDER.length) { V.buildSel = STRUCT_ORDER[digit - 1]; return; }
-    if (digit >= 1 && digit <= 7) { const w = WEAPON_ORDER[digit - 1]; if (G.stash.owned[w]) sendCmd({ c: 'wpn', w }); return; }
+    if (V.build && digit >= 0 && digit <= 9) { const i = digit === 0 ? 9 : digit - 1; if (STRUCT_ORDER[i]) V.buildSel = STRUCT_ORDER[i]; return; }
+    if (digit >= 1 && digit <= 7) { // each number key cycles the weapons of that class
+      const list = WEAPON_ORDER.filter(w => G.stash.owned[w] && WEAPONS[w].key === String(digit)); if (!list.length) return;
+      const cur = list.indexOf(meP().wpn), w = list[(cur + 1) % list.length]; sendCmd({ c: 'wpn', w }); return; }
     switch (e.code) {
       case 'KeyE': pressUse(); break;
       case 'KeyR': sendCmd({ c: 'reload' }); break;
